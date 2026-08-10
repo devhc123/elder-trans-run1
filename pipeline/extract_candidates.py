@@ -100,7 +100,6 @@ SCENARIO_SOURCES: dict[str, list[tuple[str, str, list[str]]]] = {
         ("bdyd", "疾病", ["预后"]),
         ("bdyd", "检查", ["检查须知"]),
     ],
-    # ⚠️ 医保侧只有布尔位与粗估费用，无政策条款原文。带 thin 标记。
     # ⚠️ 医保侧只有布尔位与粗估费用，无政策条款原文，是 12 类里源数据最薄的。
     # 单取 yibao_status+cost_money 只有 40 余字，作为待转译原文不成立，
     # 故并入治疗方式、疗程、常用药等字段，凑成一段有实质内容的「就医花费与
@@ -189,6 +188,26 @@ ELDER_INDICATORS = [
 ELDER_TERMS = ELDER_DISEASES + ELDER_DRUGS + ELDER_INDICATORS
 
 
+# **人群排除**：老年词表匹配的是病名（贫血/糖尿病/低血糖），不区分人群，
+# 于是「小儿α-地中海贫血」「早产儿贫血」「妊娠期糖尿病」这类记录也被抽了进来
+# ——病名对得上，人群完全不对（实测 270 条抽样里污染 14 条 / 5.2%）。
+# 凡记录名带明确的非老年人群标记，一律排除。
+#
+# 刻意**不排除**「先天性」「遗传性」：先天性甲减、遗传性血色病这类，八十岁的
+# 老人一样带着，排除它们是另一种错误。
+EXCLUDE_POPULATION = [
+    "小儿", "婴儿", "新生儿", "新生", "早产", "儿童", "幼儿", "胎儿", "婴幼儿",
+    "妊娠", "孕妇", "孕期", "怀孕", "哺乳", "产后", "产褥", "分娩", "围产",
+    "青少年", "学龄", "青春期", "少儿",
+    # 孕产相关但不含「孕/产妇」字样的漏网词（实测漏掉「胎盘早剥」「空腹血糖（产检）」）
+    "胎盘", "子痫", "产检", "羊水", "宫缩", "娩", "催产", "保胎",
+]
+
+
+def is_excluded_population(name: str) -> bool:
+    return any(k in name for k in EXCLUDE_POPULATION)
+
+
 def is_elder_relevant(
     name: str, text: str, terms: list[str] | None = None
 ) -> tuple[bool, str]:
@@ -265,6 +284,8 @@ def extract(db: sqlite3.Connection) -> dict[str, list[dict]]:
                 if not (MIN_LEN <= len(text) <= MAX_LEN):
                     continue
                 name = clean(row.get(name_col, "")) if name_col else ""
+                if is_excluded_population(name):
+                    continue
                 ok, why = is_elder_relevant(name, text, SCENARIO_TERMS.get(scenario))
                 if not ok:
                     continue
