@@ -22,3 +22,4 @@ checkpoints/
 # 系统
 .DS_Store
 index/
+candidates/
