@@ -23,6 +23,8 @@ from pipeline.extract_candidates import (  # noqa: E402
     MIN_LEN,
     NAME_MATCH_NOT_MEANINGFUL,
     SCENARIO_SOURCES,
+    is_excluded_emergency,
+    is_excluded_population,
     SIMULATED_SCENARIOS,
     THIN_SCENARIOS,
     clean,
@@ -143,19 +145,73 @@ def test_every_candidate_records_why_it_is_elder_relevant(sampled):
             assert r["elder_match"], f"{r['record_id']} 没记录老年相关性依据"
 
 
-def test_most_candidates_match_on_the_record_name(sampled):
-    """记录名命中的质量高于正文偶然提及，抽样应优先取前者。
+# 候选池「富裕」的门槛：池子至少是所需题数的 3 倍，才谈得上挑挑拣拣。
+# 池子薄的场景（急救表全库仅 276 行）只能连正文命中一起收，此时用记录名命中率
+# 衡量质量是错误的口径——该管的是「有没有混进不相关的类型」，那由排除表负责。
+RICH_POOL_FACTOR = 3
 
-    例外见 NAME_MATCH_NOT_MEANINGFUL：穴位叫「三阳络穴」，名字里不可能出现老年词，
-    真正的信号在功效正文。对这类场景强求记录名命中是错误的口径。
+
+def test_rich_pool_scenarios_mostly_match_on_the_record_name(sampled):
+    """池子富裕时，抽样应优先取记录名命中的候选。
+
+    两类例外：
+    - NAME_MATCH_NOT_MEANINGFUL：穴位叫「三阳络穴」，名字里不可能有老年词，
+      真正的信号在功效正文；
+    - 池薄场景：可选的就那么多，挑不动。
     """
+    alloc = json.loads(ALLOC.read_text(encoding="utf-8"))["allocation"]
     for scenario, rows in sampled.items():
         if scenario in NAME_MATCH_NOT_MEANINGFUL:
             continue
+        pool = CAND / f"{scenario}.jsonl"
+        n_pool = len(pool.read_text(encoding="utf-8").splitlines()) if pool.exists() else 0
+        if n_pool < alloc[scenario] * RICH_POOL_FACTOR:
+            continue
         by_name = sum(1 for r in rows if r["elder_match"].startswith("name:"))
         assert by_name / len(rows) >= 0.7, (
-            f"{scenario} 仅 {by_name}/{len(rows)} 条按记录名命中"
+            f"{scenario} 池 {n_pool} 条却仅 {by_name}/{len(rows)} 按记录名命中"
         )
+
+
+def test_no_non_elder_population_slips_through(sampled):
+    """回归：老年词表匹配病名不区分人群，曾抽进「小儿α-地中海贫血」
+    「早产儿贫血」「妊娠期糖尿病」「胎盘早剥」等 15 条（5.6%）。"""
+    for scenario, rows in sampled.items():
+        for r in rows:
+            assert not is_excluded_population(r["name"]), f"{scenario}: «{r['name']}»"
+
+
+def test_no_non_elder_emergency_type_slips_through(sampled):
+    """回归：急救库混着野外/工伤类急症，正文提到「昏迷」「出血」就被捞进来，
+    曾抽进「断指急救」「海蛇咬伤急救法」「砷中毒急救法」「高原反应处理方法」。"""
+    for r in sampled.get("急症处置", []):
+        assert not is_excluded_emergency(r["name"]), f"«{r['name']}»"
+
+
+@pytest.mark.parametrize(
+    "name", ["小儿缺铁性贫血", "早产儿贫血", "妊娠期糖尿病", "胎盘早剥", "空腹血糖（产检）"]
+)
+def test_population_exclusion_catches_known_cases(name):
+    assert is_excluded_population(name)
+
+
+@pytest.mark.parametrize("name", ["老年人前列腺癌", "先天性甲状腺功能减退症", "慢性支气管炎"])
+def test_population_exclusion_does_not_overreach(name):
+    """先天性/遗传性疾病老人一样带着，排除它们是另一种错误。"""
+    assert not is_excluded_population(name)
+
+
+@pytest.mark.parametrize(
+    "name", ["断指急救", "海蛇咬伤急救法", "砷中毒急救法", "高原反应处理方法", "蝎子蛰伤急救"]
+)
+def test_emergency_exclusion_catches_known_cases(name):
+    """「蜇/蛰」是异体字，记录里两种都用，必须都能拦住。"""
+    assert is_excluded_emergency(name)
+
+
+@pytest.mark.parametrize("name", ["老人跌倒急救", "胸痛急救", "室颤急救", "脑梗急救", "晕厥处理方法"])
+def test_emergency_exclusion_does_not_overreach(name):
+    assert not is_excluded_emergency(name)
 
 
 def test_exempt_scenarios_still_record_a_reason(sampled):

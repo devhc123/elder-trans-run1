@@ -81,6 +81,10 @@ CONDITIONS = [
 # 随机挂慢病会造出「白内障刚做完手术的老人在问糖尿病药」这种不连贯画像，
 # query 也就跟着站不住。
 TERM_TO_CONDITION = {
+    # 长词必须先于短词命中，否则「低血压」会被「血压」吃掉、画像写成"高血压多年"，
+    # 与原文语义正好相反（实测 2 例）。pick_condition 按词长降序匹配。
+    "体质性低血压": "血压偏低、常头晕乏力", "体位性低血压": "起身时容易头晕、量过低血压",
+    "低血压": "血压偏低、常头晕乏力",
     "高血压": "高血压多年", "血压": "高血压多年", "低钾": "高血压在吃利尿药",
     "糖尿病": "糖尿病十来年", "血糖": "糖尿病十来年", "格列": "糖尿病十来年",
     "二甲双胍": "糖尿病十来年", "胰岛素": "糖尿病打胰岛素", "阿卡波糖": "糖尿病十来年",
@@ -151,8 +155,33 @@ def force_gender(record_name: str) -> str | None:
     return None
 
 
-def pick_condition(elder_match: str, h: int) -> str:
-    """按抽取阶段记录的老年词挑慢病，保证画像与原文主题一致。"""
+# 人群限定词：出现在病名里但不描述病情本身，只在没有真病名可用时才兜底。
+GENERIC_QUALIFIERS = {"老年"}
+
+
+def pick_condition(elder_match: str, h: int, record_name: str = "") -> str:
+    """挑慢病，保证画像与原文主题一致。
+
+    先按**记录名**做最长匹配——记录名是这条记录讲什么的最可靠信号，且长词优先
+    可以避免「体质性低血压」被短词「血压」匹配成"高血压多年"这类语义反向错配。
+    记录名匹配不到才退回抽取阶段记的 elder_match。
+    """
+    if record_name:
+        # 按「出现位置靠前 优先于 词更长」排序。
+        # 中文病名里打头的才是定性词：「痛风性关节炎」应归到痛风而非关节炎，
+        # 「体质性低血压」应归到低血压而非血压。纯按词长会把这两个都判反。
+        # 「老年」这类是**人群限定词不是病名**，在「老年糖尿病」「老年人痛风」里
+        # 位置最靠前却最没信息量，必须降为兜底，否则会把这两条都判成"身体大不如前"。
+        hits = [
+            (record_name.index(t), -len(t), t)
+            for t in TERM_TO_CONDITION
+            if t in record_name and t not in GENERIC_QUALIFIERS
+        ]
+        if hits:
+            return TERM_TO_CONDITION[min(hits)[2]]
+        for t in GENERIC_QUALIFIERS:
+            if t in record_name:
+                return TERM_TO_CONDITION[t]
     if ":" in (elder_match or ""):
         term = elder_match.split(":", 1)[1]
         if term in TERM_TO_CONDITION:
@@ -180,7 +209,7 @@ def make_persona(
         gender,
         EDUCATION[(h >> 5) % len(EDUCATION)],
         living,
-        pick_condition(elder_match, h >> 11),
+        pick_condition(elder_match, h >> 11, record_name),
     ]
     return "，".join(parts) + f"（{who}）"
 
@@ -340,6 +369,20 @@ def merge() -> int:
             if line.strip():
                 cases.append(json.loads(line))
     cases.sort(key=lambda c: c["id"])
+
+    # 给每题记上**原文**的 strict 可读性。
+    #
+    # 这不是装饰：实测 31% 的题原文本身已 ≥0.90，「照抄原文」即通过 KPI-1、
+    # 对该指标零区分度。只报绝对达标率会高估转译能力，必须把原文基线一并留档，
+    # 让下游能报「净提升」（转译后 − 原文）作为共同主诊断。
+    try:
+        from metrics.readability import Lexicon, score
+
+        lex = Lexicon.load()
+        for c in cases:
+            c["source_readability"] = round(score(c["source_text"], lex).rate_strict, 4)
+    except Exception as e:  # 词表未构建时不阻塞合并，但要出声
+        print(f"[warn] 未能计算原文可读性：{e}", file=sys.stderr)
 
     problems = validate(cases)
     print(f"合并 {len(cases)} 题，来自 {len(files)} 个场景文件")

@@ -23,6 +23,7 @@ from pipeline.author_testset import (  # noqa: E402
     FAILURE_MODES,
     SCENARIO_FAILURE_HINTS,
     SCENARIO_PARENT,
+    GENERIC_QUALIFIERS,
     TERM_TO_CONDITION,
     make_persona,
     pick_condition,
@@ -234,3 +235,38 @@ def test_queries_are_not_all_the_same_shape(cases):
 def test_failure_modes_are_spread_across_the_set(cases):
     used = {c["targets_failure_mode"] for c in cases}
     assert len(used) >= 8, f"只用了 {len(used)} 种失败模式：{used}"
+
+
+# ---------- 画像慢病匹配：三轮实测踩到的坑 ----------
+
+@pytest.mark.parametrize(
+    "record_name,must_contain,why",
+    [
+        ("体质性低血压", "偏低", "长词优先：「低血压」不得被短词「血压」吃成高血压"),
+        ("体位性低血压", "低血压", "同上"),
+        ("痛风性关节炎", "痛风", "位置优先：中文病名里打头的才是定性词"),
+        ("老年糖尿病", "糖尿", "「老年」是人群限定词不是病名，须降为兜底"),
+        ("老年人痛风", "痛风", "同上"),
+        ("老年人前列腺癌", "前列腺", "同上"),
+        ("高尿酸肾损害", "尿酸", "位置优先：尿酸在前、肾在后"),
+    ],
+)
+def test_condition_matching_regressions(record_name, must_contain, why):
+    """这些用例每一条都对应一次实测踩坑，不是假想。
+
+    匹配策略的三条规则互相牵制，改任何一条都可能让别的退回去：
+    位置优先 > 词长优先 > 泛化词兜底。
+    """
+    got = pick_condition("", 0, record_name)
+    assert must_contain in got, f"{record_name} -> {got}（{why}）"
+
+
+def test_generic_qualifier_still_works_as_fallback():
+    """「老年」降级为兜底，但记录名里只有它时仍要能用，不能返回随机慢病。"""
+    assert pick_condition("", 0, "老年综合评估") == TERM_TO_CONDITION["老年"]
+
+
+def test_record_name_beats_elder_match():
+    """记录名是更可靠的信号，应优先于抽取阶段记的 elder_match。"""
+    got = pick_condition("text:血压", 0, "体质性低血压")
+    assert "偏低" in got, f"记录名未压过 elder_match：{got}"

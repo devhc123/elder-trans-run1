@@ -28,6 +28,13 @@ metrics:
     determinism: 确定性计算（metrics/readability.py），无 LLM 调用
     actual: null              # 词级微平均，待 --live
     actual_hard_subset: null  # hard 子集（难度=难的 15%）单独报，判别力观测口
+    # ⚠️ 原文基线：中位 0.864，其中 83/270（31%）原文已 ≥0.90。
+    # 这些题「照抄原文」即通过，对 KPI-1 零区分度。跑数必须同时报净提升与
+    # 「原文未达标子集」上的达标率，绝对达标率不得单独引用。见 AUTHORING_SPEC §4d。
+    source_baseline_median: 0.864
+    source_already_passing: 83
+    actual_net_gain: null            # 转译后 − 原文，共同主诊断
+    actual_on_headroom_subset: null  # 原文未达标的 187 题上的达标率
     actual_macro_by_scenario: null
     ci95: null
     verdict: null
@@ -79,3 +86,10 @@ caveats:
       医嘱转译无真实语料（全盘无真实医嘱单/处方笺/出院小结），只能用疾病库
       「治疗/就医」字段模拟，对外表述为「治疗方案转译」，不得称真实医嘱。
       权益匹配的医保侧只有布尔位，无政策条款原文。
+
+# --- frozen by validate_testset.py --freeze ---
+dataset_sha256: ab36798a7d58b7d60f7269e9e82a3b40f686996eaef8b43b5d58563d5312add6
+dataset_n_cases: 270
+dataset_n_scenarios: 12
+dataset_n_hard: 38
+dataset_split_seed: 20260810

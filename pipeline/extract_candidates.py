@@ -152,6 +152,29 @@ EMERGENCY_ELDER_TERMS = [
 ]
 SCENARIO_TERMS = {"急症处置": EMERGENCY_ELDER_TERMS}
 
+# 急症类型排除表。急救库里混着大量野外/工伤/职业暴露类急症，它们的**正文**会
+# 提到「昏迷」「出血」「呼吸困难」而被老年词表捞进来，但类型本身与老年居家
+# 场景无关（实测抽样里出现「断指急救」「海蛇咬伤急救法」「砷中毒急救法」
+# 「高原反应处理方法」）。
+#
+# 该场景的候选池很薄（急救表全库 276 行，落进 test 池约 55 条），无法靠"只要
+# 记录名命中"来筛，所以改为反向排除明显不相关的类型。这个池薄的事实已写进
+# AUTHORING_SPEC 的诚实披露。
+EXCLUDE_EMERGENCY = [
+    "断指", "断肢", "离断",                      # 工伤
+    # 「蜇/蛰」是异体字，记录里两种都用（"蜂蜇伤" vs "蝎子蛰伤"），必须都列
+    "蛇咬", "蛇伤", "虫咬", "蜂蜇", "蜇伤", "蛰伤", "咬伤", "蝎", "蜈蚣", "蜘蛛",  # 野外
+    "溺水", "淹溺", "高原", "潜水", "冻伤", "雪盲",
+    "砷", "汞", "铅中毒", "氰化", "农药", "有机磷", "百草枯",  # 职业/自杀性中毒
+    "触电", "雷击", "辐射", "核",
+    "枪", "爆炸", "挤压", "贯穿", "刺入",
+    "分娩", "产", "新生儿",
+]
+
+
+def is_excluded_emergency(name: str) -> bool:
+    return any(k in name for k in EXCLUDE_EMERGENCY)
+
 # 记录名天然不具判别性的场景：穴位叫「三阳络穴」「颊车穴」，名字里不可能出现
 # 老年词，真正的信号在功效正文（该穴位主治失眠/高血压才是老年相关的证据）。
 # 这类场景的抽样按正文命中取，不强求记录名命中。
@@ -204,8 +227,33 @@ EXCLUDE_POPULATION = [
 ]
 
 
-def is_excluded_population(name: str) -> bool:
-    return any(k in name for k in EXCLUDE_POPULATION)
+# 记录名不含人群标记、但正文通篇在讲儿科的情况。
+# 实测漏网：「先天性甲状腺功能减退症」记录名**不该**排除——老人也带着这个病——
+# 但它的正文是"宝宝喂药""对小婴儿…压碎后加奶服用"，纯儿科养育内容。
+#
+# 强弱标记分开，是因为一刀切会大量误伤：「重度贫血」「缺铁性贫血」的正文里都有
+# 一句"关注婴幼儿、青少年、孕妇营养保健"，那是在列高危人群，整条记录仍是成人
+# 适用的。实测一刀切 6 命中里 3 条是误伤。
+#
+# 判据（按实际正文归纳，非拍脑袋）：
+#   - 出现育儿语（宝宝/小婴儿/家长/小朋友）→ 直接排除
+#   - 「患儿」出现 ≥2 次 → 整段以儿科视角写成，排除
+#   - 只在人群清单里提一句「婴幼儿」→ 保留
+PEDIATRIC_STRONG = ["宝宝", "小婴儿", "小朋友", "家长"]
+PEDIATRIC_BODY_HEAD = 160  # 只看开头，避免成人药品禁忌里提一句"儿童禁用"就被误杀
+
+
+def is_pediatric_body(text: str) -> bool:
+    head = text[:PEDIATRIC_BODY_HEAD]
+    if any(k in head for k in PEDIATRIC_STRONG):
+        return True
+    return head.count("患儿") >= 2
+
+
+def is_excluded_population(name: str, text: str = "") -> bool:
+    if any(k in name for k in EXCLUDE_POPULATION):
+        return True
+    return bool(text) and is_pediatric_body(text)
 
 
 def is_elder_relevant(
@@ -220,6 +268,29 @@ def is_elder_relevant(
         if kw in text:
             return True, f"text:{kw}"
     return False, ""
+
+
+_LEX = None
+
+
+def _source_readability(text: str) -> float | None:
+    """原文的 strict 可读性。
+
+    记进候选是为了让下游能报「净提升」：**31% 的原文本身已 ≥0.90**，这些题
+    「照抄原文」即通过、对 KPI-1 零区分度。只报绝对达标率会高估转译能力，
+    必须把原文基线一并留档（见 docs/AUTHORING_SPEC.md §5）。
+    """
+    global _LEX
+    try:
+        if _LEX is None:
+            from metrics.readability import Lexicon
+
+            _LEX = Lexicon.load()
+        from metrics.readability import score
+
+        return round(score(text, _LEX).rate_strict, 4)
+    except Exception:
+        return None
 
 
 def clean(s: str) -> str:
@@ -284,7 +355,9 @@ def extract(db: sqlite3.Connection) -> dict[str, list[dict]]:
                 if not (MIN_LEN <= len(text) <= MAX_LEN):
                     continue
                 name = clean(row.get(name_col, "")) if name_col else ""
-                if is_excluded_population(name):
+                if is_excluded_population(name, text):
+                    continue
+                if scenario == "急症处置" and is_excluded_emergency(name):
                     continue
                 ok, why = is_elder_relevant(name, text, SCENARIO_TERMS.get(scenario))
                 if not ok:
@@ -298,6 +371,7 @@ def extract(db: sqlite3.Connection) -> dict[str, list[dict]]:
                         "source_text": text,
                         "n_chars": len(text),
                         "elder_match": why,
+                        "source_readability": _source_readability(text),
                         "provenance": {
                             "lib": lib,
                             "logical": logical,
