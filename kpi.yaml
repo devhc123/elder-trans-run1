@@ -1,0 +1,81 @@
+# kpi.yaml —— 单一真相源。
+#
+# 规则：数字只进这里，不复制进 README / 文档正文（状态散多处必漂移）。
+# actual 一律为 null，直到 metrics/run_eval.py --live 真跑出来为止。
+# dry-run 的数字来自确定性 mock，只验管线，不得填进 actual。
+
+benchmark: 适老化医疗转译（面向银发群体的适老化医嘱解读与个性化健康服务智能推荐）
+project_level: 部门级
+
+# --- 数据与切分 ---------------------------------------------------------
+data_source: 七个中文医疗爬虫库（bdyd / dxys / mkss / others / xywy / ylys / zsys）
+corpus_records: 83730        # 索引后的**逻辑记录**数，非物理行数（见下方 caveats）
+split_seed: 20260810         # record_id 级三分切的种子，改动即作废所有下游抽样
+split_ratios: {test: 20, verifier_train: 60, reserve: 20}
+
+# --- KPI ----------------------------------------------------------------
+metrics:
+
+  - id: kpi1_readability
+    name: 适老化转译可读性达标率
+    definition: >
+      转译后文本中符合小学六年级可读水平的词汇比例（词级微平均）。判定见
+      docs/METRIC_SPEC.md：一个计分词达标 iff 在单位白名单、或在常见健康词
+      白名单、或（全部汉字 ∈ 课标常用字表一 2500 且不在 jargon 术语集）。
+    primary_gauge: strict     # 主口径：课标字表一 2500，医学实体不豁免
+    target: 0.90
+    also_report: [glossed, lenient]
+    determinism: 确定性计算（metrics/readability.py），无 LLM 调用
+    actual: null              # 词级微平均，待 --live
+    actual_hard_subset: null  # hard 子集（难度=难的 15%）单独报，判别力观测口
+    actual_macro_by_scenario: null
+    ci95: null
+    verdict: null
+    command: python3 metrics/run_eval.py --live
+
+  - id: kpi2_scenario_coverage
+    name: 适老场景覆盖数
+    definition: >
+      测试集中有真实 provenance 支撑的子场景数。父类沿用项目书第六栏原文的
+      8 类不变，子场景挂靠其下，指标说明一字不改。
+    target: 10
+    actual_subscenarios: 12      # 超额；配比依据见 docs/AUTHORING_SPEC.md
+    allocation_basis: 老年特异子集（43 条 / 频次 4560），非全量日志
+    parent_classes:
+      理解域: [检验报告解读, 医嘱转译, 用药说明, 健康科普]
+      推荐域: [权益匹配, 分科医生, 复诊提醒, 用药干预]
+    actual: null
+    command: python3 pipeline/validate_testset.py
+
+  - id: guard_faithfulness
+    name: 忠实性通过率（守门指标，非项目书 KPI）
+    definition: >
+      判官判定 faithful_overall 且 negative_rubric 无 any-violated。
+      防止可读性靠歪曲或删减原文换取。
+    judge: Claude Sonnet 5（session subagent；异厂解耦，判官厂商 != 被测厂商）
+    reproducibility: 可审计不可复现 —— 逐条留痕 judge_runs/<run_id>.jsonl
+    actual: null
+    ci95: null
+
+# --- 被测系统 -----------------------------------------------------------
+system_under_test:
+  model: deepseek-v4-flash    # 已核实存在（该 key 上另有 deepseek-v4-pro）
+  note: deepseek-chat 已不在该 key 的模型列表，勿照抄旧项目配置
+
+# --- 诚实披露 -----------------------------------------------------------
+caveats:
+  - 口径: 可读性 = 词级微平均达标率（strict）；覆盖 = 有真实 case 的子场景数。
+  - 语料规模: >
+      83730 是 csv 逻辑记录数。多个文件的字段内含换行，按物理行数会严重高估
+      （bdyd/疾病 物理 651924 行，实为 4273 条记录）。凡引用规模一律用记录数。
+  - 判官: >
+      忠实性判官是 session 内的 Claude，无可钉版本的 API model id，**可审计但
+      不可复现**，重跑会漂。可读性 KPI 是确定性计算，不受此影响。
+  - 词表: >
+      字级用官方课标字表，词级用 GF 0025-2021；但国内唯一官方「词→年级」标准
+      《义务教育常用词表（草案）》无公开机读版，当前实现是官方字级+官方词级量表
+      的组合，尚不是词级年级标准本身。jargon.txt 是唯一非官方词表。
+  - 数据缺口: >
+      医嘱转译无真实语料（全盘无真实医嘱单/处方笺/出院小结），只能用疾病库
+      「治疗/就医」字段模拟，对外表述为「治疗方案转译」，不得称真实医嘱。
+      权益匹配的医保侧只有布尔位，无政策条款原文。
