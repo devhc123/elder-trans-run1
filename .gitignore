@@ -1,0 +1,23 @@
+# 密钥：绝不入库
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 判官留痕与跑数产物（体积大、含模型输出，按需单独归档）
+judge_runs/
+runs/
+*.log
+
+# 训练产物
+checkpoints/
+*.gguf
+*.safetensors
+
+# 系统
+.DS_Store
