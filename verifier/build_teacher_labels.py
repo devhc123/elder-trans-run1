@@ -190,9 +190,12 @@ def auto_key_points(text: str) -> list[str]:
     parts = [p for p in parts if len(p) >= 12]
     if len(parts) <= MAX_AUTO_KEY_POINTS:
         return parts
-    # 均匀取，保证首尾都在——尾部要点正是"长原文截断压力"要考的地方
-    step = len(parts) / MAX_AUTO_KEY_POINTS
-    return [parts[min(int(i * step), len(parts) - 1)] for i in range(MAX_AUTO_KEY_POINTS)]
+    # 均匀取，**首尾必须都在**——尾部要点正是"长原文截断压力"要考的地方。
+    # 早期写成 int(i * len/MAX)，末位取到的是 25/30 而非 29，尾部永远落不到，
+    # 而 docstring 却声称保证首尾。改为在 [0, n-1] 上均分。
+    n = len(parts)
+    idx = [round(i * (n - 1) / (MAX_AUTO_KEY_POINTS - 1)) for i in range(MAX_AUTO_KEY_POINTS)]
+    return [parts[i] for i in sorted(set(idx))]
 
 
 def check() -> int:
@@ -240,10 +243,30 @@ def check() -> int:
     if problems:
         return 1
 
+    # **按桶报 fail 率，不报总体。** 总体 fail 率会被标注进度带偏：标注包是按桶
+    # 顺序切的，只标完前几包或后几包，总体数字就完全不代表难例采样的效果。
     import collections
-    print("按桶:", dict(collections.Counter(src[r["case_id"]]["bucket"] for r in rows if r["case_id"] in src)))
+    per = collections.defaultdict(lambda: [0, 0])
+    for r in rows:
+        s_ = src.get(r["case_id"])
+        if not s_:
+            continue
+        b = per[s_["bucket"]]
+        b[0] += 1
+        b[1] += r["verdict"] == "fail"
+    print(f"\n{'桶':<14}{'已标':>5}{'fail':>7}")
+    print("-" * 28)
+    for b in ("thin_source", "category", "negation", "conditional", "plain"):
+        n, f = per.get(b, [0, 0])
+        print(f"{b:<14}{n:>5}{(f/n if n else 0):>7.1%}" + ("" if n else "   （未标注）"))
+    print("-" * 28)
     fails = sum(1 for r in rows if r["verdict"] == "fail")
-    print(f"fail 比例 {fails}/{len(rows)} = {fails/len(rows):.1%}   <- 太低说明难例采样没起作用")
+    print(f"{'合计':<14}{len(rows):>5}{fails/len(rows):>7.1%}")
+    done = {b for b in per if per[b][0] >= 20}
+    if {"thin_source", "category"} - done:
+        print("\n[注意] 难例桶 thin_source / category 尚未标注足量，"
+              "现有 fail 率不代表难例采样效果——难例采样是否有效要看这两个桶。",
+              file=sys.stderr)
     return 0
 
 
