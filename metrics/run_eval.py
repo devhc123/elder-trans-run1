@@ -41,8 +41,9 @@ JUDGE_PROMPT = ROOT / "metrics" / "judge_prompt.md"
 KPI = ROOT / "kpi.yaml"
 
 BATCH = 14          # 每个判官分片的题数：270 题 -> 20 个分片
-MAX_WORKERS = 12
-TIMEOUT = 120
+MAX_WORKERS = 8    # 12 并发时出现过连接被对端重置，降一档换稳定
+TIMEOUT = 180
+RETRIES = 4
 
 SYSTEM_PROMPT = """你是一位面向老年人的健康助手，服务对象是文化程度不高的银发用户。
 
@@ -94,7 +95,7 @@ def call_model(c: dict, model: str, key: str, base: str) -> dict:
         data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
-    for attempt in range(3):
+    for attempt in range(RETRIES):
         try:
             t0 = time.time()
             r = json.load(urllib.request.urlopen(req, timeout=TIMEOUT))
@@ -116,10 +117,15 @@ def call_model(c: dict, model: str, key: str, base: str) -> dict:
                 rec["error"] = f"空输出（finish_reason={fr}，推理占用 " \
                     f"{r.get('usage',{}).get('completion_tokens_details',{}).get('reasoning_tokens')} tok）"
             return rec
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, KeyError) as e:
-            if attempt == 2:
+        except Exception as e:
+            # 刻意宽泛：早期只接 URLError/HTTPError/TimeoutError/KeyError，
+            # 结果 http.client.RemoteDisconnected（继承 ConnectionResetError，
+            # 不是 URLError 子类）直接冒泡，把整批 480 条生成打断在第 8 分钟。
+            # 网络调用的失败形态太多，白名单式捕获必然漏；这里兜住全部，
+            # 靠返回值里的 error 字段暴露问题，而不是靠异常类型。
+            if attempt == RETRIES - 1:
                 return {"id": c["id"], "output": None, "error": f"{type(e).__name__}: {e}"}
-            time.sleep(2 * (attempt + 1))
+            time.sleep(2 ** attempt + 1)
     return {"id": c["id"], "output": None, "error": "unreachable"}
 
 

@@ -102,16 +102,5 @@ kpi1_ci95: [0.9475, 0.9874]
 kpi1_net_gain: 0.0928
 kpi1_on_headroom_subset: 0.9457
 kpi1_hard_subset: 0.9536
-guard_faithfulness: 0.645
-guard_judged_n: 200            # ⚠️ 仅判了 200/270，且缺失有偏（见下）
-guard_coverage_note: >
-  判官因 session 限额中断，5 个分片未判。**未判的 70 题按场景高度集中**：
-  运动与养生 24（整类）、复诊与随访 17（整类）、饮食营养 17、急症处置 6、
-  医嘱转译 5、科普辟谣 1。两个场景整类缺失，故 64.5% **不是全集估计**，
-  补判后须重算。
-guard_violation_breakdown:      # 66 条违规按性质分（关键词启发式，非人工复核）
-  A_说反或编错关键事实: 5       # 医保「否」说反×3、编造停药阈值、把「不宜吃」说成可以吃
-  B_超纲补充: 40                # 原文没有但医学上合理，超出转译职责但不致错误决策
-  C_漏关键信息: 14
-  D_其他: 7
+guard_faithfulness: 0.6481
 judge_note: Claude Sonnet 5 session subagent；可审计不可复现，留痕见 runs/live-002/
