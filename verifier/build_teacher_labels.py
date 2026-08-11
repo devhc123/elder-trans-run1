@@ -284,6 +284,24 @@ def main() -> int:
 
     WORK.mkdir(parents=True, exist_ok=True)
     LABELS.mkdir(parents=True, exist_ok=True)
+
+    # 防覆盖：to_label.json 在 gen_answers 之后会带上 answer 字段，重跑 --sample
+    # 会把它连同已生成的回答一起冲掉。实测踩过一次（8 分钟的生成差点作废，
+    # 靠 packets/ 里的副本才救回来）。
+    out = WORK / "to_label.json"
+    if out.exists():
+        try:
+            prev = json.loads(out.read_text(encoding="utf-8"))
+        except Exception:
+            prev = []
+        if any(c.get("answer") for c in prev):
+            print(
+                f"[拒绝] {out} 已含 {sum(1 for c in prev if c.get('answer'))} 条生成好的回答，"
+                "重抽会把它们冲掉。\n"
+                "确实要重抽就先手动改名备份，或删掉该文件。",
+                file=sys.stderr,
+            )
+            return 1
     with sqlite3.connect(DB) as db:
         buckets = collect(db)
     print("各桶规模:", {k: len(v) for k, v in buckets.items()})
@@ -297,7 +315,6 @@ def main() -> int:
     picked = [c for c in picked if len(c["key_points"]) >= 2]
     print(f"过滤掉要点不足 2 条的，剩 {len(picked)} 条")
 
-    out = WORK / "to_label.json"
     out.write_text(json.dumps(picked, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"-> {out}")
     return 0
