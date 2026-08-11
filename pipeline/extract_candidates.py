@@ -38,6 +38,29 @@ CAND_DIR = ROOT / "candidates"
 ALLOC_PATH = ROOT / "docs" / "faq_classification.json"
 
 MIN_LEN, MAX_LEN = 40, 1200
+
+# 多字段拼接时给每段加中文标签。
+#
+# **不加标签会让整类题变成 schema 猜谜。** 实测：权益匹配的原文是裸 DB 行，
+# 开头孤零零一个「否」——那是 yibao_status 字段，但文本里没有任何线索表明它
+# 指医保。被测系统把它误读成「不是这个病」「不严重」「不传染」，判官记成
+# 「把医保『否』说反」并判违规，15/15 全挂。
+#
+# 那不是转译失真，是输入缺陷：任何读者拿到这段文本都不可能知道「否」指什么。
+# 判官审计与两个独立的教师标注 agent 分别发现了同一问题。
+FIELD_LABELS = {
+    "yibao_status": "是否医保报销", "medicalInsurance": "是否医保报销",
+    "是否医保：": "是否医保报销",
+    "cost_money": "大致费用", "cure_way": "治疗方式", "treatmentMethods": "治疗方式",
+    "cure_lasttime": "治疗周期", "treatmentCycle": "治疗周期", "治疗周期：": "治疗周期",
+    "check": "相关检查", "cureRate": "治愈率", "cured_prob": "治愈率",
+    "cure_department": "就诊科室", "clinicalDepartment": "就诊科室", "vis_dep": "就诊科室",
+    "do_eat": "宜吃", "not_eat": "不宜吃", "recommand_eat": "推荐食谱",
+    "宜吃": "宜吃", "少吃": "少吃", "慎吃": "慎吃",
+    "taboo": "禁忌", "warning": "警告", "interaction": "药物相互作用",
+    "side_effect": "不良反应", "indication": "适应症", "dosage": "用法用量",
+    "best_time": "最佳就诊时间", "advice": "建议", "method": "治疗方法",
+}
 SAMPLE_SEED = 20260810
 
 # 场景 -> [(库, 逻辑表, [必需字段...])]。字段名逐一对照 index 的 files.columns。
@@ -351,7 +374,15 @@ def extract(db: sqlite3.Connection) -> dict[str, list[dict]]:
                 parts = [clean(row.get(f, "")) for f in fields]
                 if not all(parts):
                     continue
-                text = "\n".join(parts)
+                # 单字段时不加标签（原文本身是完整段落）；多字段拼接时必须加，
+                # 否则读者无从分辨每段是什么。
+                if len(fields) > 1:
+                    text = "\n".join(
+                        f"{FIELD_LABELS[f]}：{v}" if f in FIELD_LABELS else v
+                        for f, v in zip(fields, parts)
+                    )
+                else:
+                    text = "\n".join(parts)
                 if not (MIN_LEN <= len(text) <= MAX_LEN):
                     continue
                 name = clean(row.get(name_col, "")) if name_col else ""
