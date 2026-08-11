@@ -146,3 +146,81 @@ def test_max_seq_covers_the_actual_data():
     p90 = lens[int(len(lens) * 0.9)]
     # 中文约 1 字 ≈ 1 token 的保守估计，留一倍余量给输出
     assert p90 * 2 < MAX_SEQ, f"P90 prompt {p90} 字，MAX_SEQ={MAX_SEQ} 可能不够"
+
+
+# ---------- 训练数据的可学性（错了不报错，只是训出废物） ----------
+
+from verifier.train_lora import TRAIN_RED_LINES  # noqa: E402
+
+TRAIN = ROOT / "verifier" / "train.jsonl"
+HOLD = ROOT / "verifier" / "holdout.jsonl"
+
+
+def _rows(p):
+    if not p.exists():
+        pytest.skip(f"{p.name} 未生成")
+    return [json.loads(l) for l in p.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+
+def test_dropped_red_lines_are_the_zero_trigger_ones():
+    """砍掉的必须是实测零触发的红线 3/4，不是随便砍的。"""
+    assert TRAIN_RED_LINES == [0, 1, 2]
+
+
+def test_training_has_no_constant_false_redline_slot():
+    """恒为 false 的槽位让模型学成「这一位永远填 false」，是纯粹的信号稀释。"""
+    rows = _rows(TRAIN)
+    counts = {i: 0 for i in TRAIN_RED_LINES}
+    for r in rows:
+        for x in json.loads(r["output"])["red_lines"]:
+            if x["violated"]:
+                counts[x["idx"]] += 1
+    zero = [i for i, c in counts.items() if c == 0]
+    assert not zero, f"红线 {zero} 在训练集里零触发，应从训练目标里砍掉"
+
+
+def test_prompt_and_target_redlines_line_up():
+    """prompt 里列几条红线，target 就必须输出几条——对不上模型学不到 idx 对应。"""
+    rows = _rows(TRAIN)
+    for r in rows[:50]:
+        n_prompt = r["input"].count("\n", r["input"].index("【红线】"))
+        n_target = len(json.loads(r["output"])["red_lines"])
+        assert n_target == len(TRAIN_RED_LINES)
+        assert n_prompt >= n_target
+
+
+def test_key_point_labels_have_both_classes():
+    """covered 全 True 会让模型学成常量。"""
+    rows = _rows(TRAIN)
+    flags = [k["covered"] for r in rows for k in json.loads(r["output"])["key_points"]]
+    assert 0 < sum(flags) < len(flags)
+
+
+def test_holdout_is_disjoint_from_training():
+    tr = {r["input"] for r in _rows(TRAIN)}
+    ho = {r["input"] for r in _rows(HOLD)}
+    assert not (tr & ho), f"训练/验收集重叠 {len(tr & ho)} 条"
+
+
+def test_holdout_is_enriched_for_positives():
+    """正例稀缺时随机切会让验收集更没功效，必须分层。"""
+    fr = lambda rows: sum(1 for r in rows if '"verdict": "fail"' in r["output"]) / len(rows)
+    assert fr(_rows(HOLD)) > fr(_rows(TRAIN))
+
+
+def test_rare_redlines_are_flagged_as_underpowered():
+    """红线 1 实测只有个位数正例——学不出也验不出，必须有据可查地记下来，
+    不能让人拿着这份数据直接去训还以为三条都能学。"""
+    rows = _rows(TRAIN)
+    counts = {i: 0 for i in TRAIN_RED_LINES}
+    for r in rows:
+        for x in json.loads(r["output"])["red_lines"]:
+            if x["violated"]:
+                counts[x["idx"]] += 1
+    weak = [i for i, c in counts.items() if c < 20]
+    doc = (ROOT / ".scratch" / "elder-trans-harness" / "issues" /
+           "09-teacher-labels-pilot.md").read_text(encoding="utf-8")
+    for i in weak:
+        assert f"红线 {i}" in doc or f"红线{i}" in doc, (
+            f"红线 {i} 正例仅 {counts[i]} 条（<20，不足以学习），但票据里没有记录这一点"
+        )

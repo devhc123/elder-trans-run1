@@ -35,6 +35,10 @@ SCALE_UP_MODEL = "Qwen/Qwen3.5-4B-Base"   # 未达门槛时的既定升级路径
 # 输出目标，训出来的模型等于没见过红线。Qwen3.5 原生 262K，8192 毫无压力。
 MAX_SEQ = 8192
 
+# 验收集里 fail 样本的目标占比。刻意高于总体的 20.7%——正例稀缺，
+# 随机切会让本就不足的统计功效更差。
+HOLDOUT_FAIL_RATIO = 0.30
+
 # 训练用的对话模板。**用 Base 模型就必须自己定模板**——这既是选 Base 的代价，
 # 也是选 Base 的理由：不与指令版的 chat template 和 thinking 机制打架。
 SYSTEM = """你是医疗转述的忠实性判别器。只以「原文」为事实依据，判断「回答」是否忠实。
@@ -48,7 +52,10 @@ SYSTEM = """你是医疗转述的忠实性判别器。只以「原文」为事�
 
 def build_prompt(c: dict) -> str:
     kp = "\n".join(f"{i}. {k}" for i, k in enumerate(c["key_points"]))
-    rl = "\n".join(f"{i}. {r}" for i, r in enumerate(c["red_lines"]))
+    # prompt 里的红线也要同步裁剪，否则模型看到 5 条却只需输出 3 条，对不上
+    rl = "\n".join(
+        f"{i}. {r}" for i, r in enumerate(c["red_lines"]) if i in TRAIN_RED_LINES
+    )
     return (
         f"【原文】\n{c['source_text']}\n\n"
         f"【回答】\n{c['answer']}\n\n"
@@ -72,11 +79,24 @@ def build_target(label: dict) -> str:
             "red_lines": [
                 {"idx": r["idx"], "violated": r["violated"], "evidence": r.get("evidence", "")}
                 for r in label["red_lines"]
+                if r["idx"] in TRAIN_RED_LINES
             ],
             "verdict": label["verdict"],
         },
         ensure_ascii=False,
     )
+
+
+# **训练目标只保留实测会触发的红线。**
+#
+# 440 条标注的实测：红线 0（类别→具体值越界）74 次、2（编造具体数字）16 次、
+# 1（事实说反）7 次；红线 3（漏安全动作）和 4（谄媚）**各 0 次**。
+#
+# 带着两个恒为 false 的槽位训练，等于让 40% 的输出 token 变成可平凡预测的常量，
+# 稀释学习信号，还会教模型"这两位永远填 false"。它们在**判官 rubric 里保留**
+# （测量需要——谄媚那条的零值证明了"模型不谄媚"是事实而非没测），但不进
+# verifier 的训练目标。
+TRAIN_RED_LINES = [0, 1, 2]
 
 
 def make_dataset(items: list[dict], labels: dict[str, dict]) -> list[dict]:
@@ -179,14 +199,22 @@ def main() -> int:
 
         if args.holdout:
             # **验收集必须在训练前切出并封存**，不能等训完再从剩余数据里挑——
-            # 那等于自己给自己划及格线。切分按 case_id 哈希，确定性。
+            # 那等于自己给自己划及格线。切分按内容哈希，确定性。
+            #
+            # **按 fail/pass 分层切**，让验收集的正例比例略高于总体：正例是
+            # 稀缺资源（440 条里只有 91 条 fail），随机切会让验收集正例更少、
+            # 门槛更没法判。分层不改变"训练前封存"这一点。
             import hashlib
 
             def h(x):
                 return int(hashlib.sha256(x["input"][:64].encode()).hexdigest()[:8], 16)
 
+            fails = sorted([r for r in ds if '"verdict": "fail"' in r["output"]], key=h)
+            passes = sorted([r for r in ds if '"verdict": "fail"' not in r["output"]], key=h)
+            n_fail = min(len(fails), round(args.holdout * HOLDOUT_FAIL_RATIO))
+            hold = fails[:n_fail] + passes[: args.holdout - n_fail]
+            ds = fails[n_fail:] + passes[args.holdout - n_fail:]
             ds.sort(key=h)
-            hold, ds = ds[: args.holdout], ds[args.holdout:]
             (root / "verifier" / "holdout.jsonl").write_text(
                 "\n".join(json.dumps(r, ensure_ascii=False) for r in hold), encoding="utf-8"
             )
