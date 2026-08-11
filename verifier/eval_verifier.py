@@ -27,6 +27,9 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from metrics.wilson import wilson  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 LABELS = ROOT / "verifier" / "labels"
 WORK = ROOT / "verifier" / "work"
@@ -117,6 +120,20 @@ def report(m: dict) -> bool:
     print("\n【红线】violated/not，逐条。**刻意不对称：漏报远比误报危险**")
     print(f"  样本点 {m['redline_n']}，其中教师判违规 {m['redline_positives']}")
     print(f"  TP {m['redline_tp']}  FN {m['redline_fn']}(漏报)  FP {m['redline_fp']}(误报)  TN {m['redline_tn']}")
+    # **统计功效检查。** 门槛 ≤5% 意味着 20 条正例里漏 1 条就到线、漏 2 条就出局，
+    # 而 20 条正例连"漏报率 ≤5%"都证不了：即便一条不漏，真实漏报率的 95% 上界
+    # 仍有 16%。不把这点说破，会造成"验收通过了"的错觉。
+    pos = m["redline_positives"]
+    lo_recall, _ = wilson(m["redline_tp"], pos) if pos else (0.0, 0.0)
+    worst_miss = 1 - lo_recall
+    need = int(1 / GATES["redline_miss_rate"] * 4)   # 粗估：要让 CI 上界压到门槛附近
+    if worst_miss > GATES["redline_miss_rate"] * 2:
+        print(f"\n  ⚠️ **统计功效不足**：验收集只有 {pos} 条红线正例。即便当前漏报"
+              f"{m['redline_miss_rate']:.0%}，真实漏报率的 95% 上界仍有 {worst_miss:.0%}，"
+              f"远高于 {GATES['redline_miss_rate']:.0%} 的门槛。\n"
+              f"     这个门槛要真站得住，需要约 {need} 条红线正例（当前的 "
+              f"{need / max(pos, 1):.0f} 倍）。**现在的『通过』只是没被证伪，不是已被证实。**")
+
     ok_miss = m["redline_miss_rate"] <= GATES["redline_miss_rate"]
     ok_fa = m["redline_false_alarm"] <= GATES["redline_false_alarm"]
     print(f"  漏报率 {m['redline_miss_rate']:.1%}   （门槛 ≤{GATES['redline_miss_rate']:.0%}）-> {'通过' if ok_miss else '未通过'}")

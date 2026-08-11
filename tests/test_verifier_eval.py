@@ -201,3 +201,40 @@ def test_teacher_labels_have_consistent_verdict(labels):
 def test_teacher_labels_have_no_duplicates(labels):
     ids = [j["case_id"] for j in labels]
     assert len(ids) == len(set(ids))
+
+
+# ---------- 统计功效（验收集太小时必须出声） ----------
+
+def test_small_holdout_cannot_prove_the_miss_rate_gate(capsys):
+    """即便一条不漏，20 条正例也证不了「漏报 ≤5%」——CI 上界仍有 16%。
+
+    不把这点说破，会造成"验收通过了"的错觉。这条测试守的是**诚实**，
+    不是正确性。
+    """
+    from verifier.eval_verifier import report
+
+    gold, pred = {}, {}
+    for i in range(100):
+        has = i < 20                       # 20 条正例
+        g, p = _pack(f"c{i}", [True] * 3, [True] * 3, [has, False], [has, False])
+        gold[g["case_id"]] = g
+        pred[p["case_id"]] = p
+    m = evaluate(pred, gold)
+    assert m["redline_miss_rate"] == 0.0   # 完美：一条不漏
+    report(m)
+    out = capsys.readouterr().out
+    assert "统计功效不足" in out, "小样本下没有发出功效警告"
+    assert "没被证伪" in out
+
+
+def test_large_holdout_does_not_warn(capsys):
+    from verifier.eval_verifier import report
+
+    gold, pred = {}, {}
+    for i in range(1000):
+        has = i < 300
+        g, p = _pack(f"c{i}", [True] * 3, [True] * 3, [has, False], [has, False])
+        gold[g["case_id"]] = g
+        pred[p["case_id"]] = p
+    report(evaluate(pred, gold))
+    assert "统计功效不足" not in capsys.readouterr().out
