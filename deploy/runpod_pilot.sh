@@ -201,25 +201,35 @@ fi
 ok "SSH 通：$HOST:$PORT"
 
 echo "[装依赖]"
-$SSH "pip install -q unsloth trl datasets peft accelerate bitsandbytes 2>&1 | tail -5"
+$SSH "pip install -q unsloth trl datasets peft accelerate bitsandbytes 2>&1 | tail -5" \
+  || { echo "装依赖失败，中止（避免带着装不全的环境继续训练/推理）"; exit 1; }
 
 echo "[传数据与脚本]"
 $SSH "mkdir -p $REMOTE_DIR/verifier $REMOTE_DIR/verifier/work"
 scp -o StrictHostKeyChecking=no -i "$KEY" -P "$PORT" \
   verifier/train_lora.py verifier/predict_lora.py verifier/train.jsonl verifier/holdout.jsonl \
-  "root@$HOST:$REMOTE_DIR/verifier/"
+  "root@$HOST:$REMOTE_DIR/verifier/" \
+  || { echo "传数据/脚本失败，中止"; exit 1; }
 scp -o StrictHostKeyChecking=no -i "$KEY" -P "$PORT" \
-  verifier/work/to_label.json "root@$HOST:$REMOTE_DIR/verifier/work/"
+  verifier/work/to_label.json "root@$HOST:$REMOTE_DIR/verifier/work/" \
+  || { echo "传 to_label.json 失败，中止"; exit 1; }
 
+# **remote 端也要 set -o pipefail**：不然 `python3 ... | tail -60` 这条流水线的
+# 退出码是 tail 的（几乎总是 0），训练/推理真正失败时本地这边看到的仍是"成功"，
+# 会带着一个陈旧/半截的 pred.jsonl 往下跑 eval_verifier.py，把它当成摸底结果汇报
+# ——这正是 code review 抓出来的那类"看起来成功和真正成功长得一样"的坑。
 echo "[训练]"
-$SSH "cd $REMOTE_DIR && python3 verifier/train_lora.py --data verifier/train.jsonl --out ./ckpt --epochs $EPOCHS 2>&1 | tail -60"
+$SSH "set -o pipefail; cd $REMOTE_DIR && python3 verifier/train_lora.py --data verifier/train.jsonl --out ./ckpt --epochs $EPOCHS 2>&1 | tail -60" \
+  || { echo "远程训练失败（退出码非 0），中止——不要拿这次的 ckpt/pred 当结果"; exit 1; }
 
 echo "[推理（holdout）]"
-$SSH "cd $REMOTE_DIR && python3 verifier/predict_lora.py --ckpt ./ckpt --case-ids-from verifier/holdout.jsonl --out pred.jsonl --checkpoint-every 10 2>&1 | tail -60"
+$SSH "set -o pipefail; cd $REMOTE_DIR && python3 verifier/predict_lora.py --ckpt ./ckpt --case-ids-from verifier/holdout.jsonl --out pred.jsonl --checkpoint-every 10 2>&1 | tail -60" \
+  || { echo "远程推理失败（退出码非 0），中止——不要拿这次的 pred.jsonl 当结果"; exit 1; }
 
 echo "[取回结果]"
 mkdir -p runs/verifier
-scp -o StrictHostKeyChecking=no -i "$KEY" -P "$PORT" "root@$HOST:$REMOTE_DIR/pred.jsonl" runs/verifier/pred.jsonl
+scp -o StrictHostKeyChecking=no -i "$KEY" -P "$PORT" "root@$HOST:$REMOTE_DIR/pred.jsonl" runs/verifier/pred.jsonl \
+  || { echo "取回 pred.jsonl 失败，中止（别拿本地残留的旧文件当新结果评）"; exit 1; }
 
 echo "[本地验收]"
 python3 verifier/eval_verifier.py --pred runs/verifier/pred.jsonl
