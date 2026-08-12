@@ -50,6 +50,15 @@ SYSTEM = """你是医疗转述的忠实性判别器。只以「原文」为事�
 只输出 JSON，不要解释。evidence 必须是原文或回答里的原样子串。"""
 
 
+def render_prompt(system: str, input_: str) -> str:
+    """训练用的对话模板。predict_lora.py 的推理 prompt 必须调这同一个函数——
+
+    分开写两份字面量模板，改一处忘改另一处时训练/推理会静默错位（模型看到的
+    不再是它训练时见过的格式），这类偏差不报错，只会让输出质量莫名下降。
+    """
+    return f"<|system|>\n{system}\n<|user|>\n{input_}\n<|assistant|>\n"
+
+
 def build_prompt(c: dict) -> str:
     kp = "\n".join(f"{i}. {k}" for i, k in enumerate(c["key_points"]))
     # prompt 里的红线也要同步裁剪，否则模型看到 5 条却只需输出 3 条，对不上
@@ -105,7 +114,10 @@ def make_dataset(items: list[dict], labels: dict[str, dict]) -> list[dict]:
         lab = labels.get(c["case_id"])
         if not lab:
             continue
-        out.append({"system": SYSTEM, "input": build_prompt(c), "output": build_target(lab)})
+        # case_id 必须留着：predict_lora.py 在 RunPod 上推理完，靠它把结果
+        # 对回 verifier/labels/ 的教师标注——不留就没法喂给 eval_verifier.py。
+        out.append({"case_id": c["case_id"], "system": SYSTEM,
+                    "input": build_prompt(c), "output": build_target(lab)})
     return out
 
 
@@ -140,10 +152,7 @@ def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int) -> 
     )
 
     def fmt(ex):
-        return {
-            "text": f"<|system|>\n{ex['system']}\n<|user|>\n{ex['input']}\n"
-                    f"<|assistant|>\n{ex['output']}{tok.eos_token}"
-        }
+        return {"text": render_prompt(ex["system"], ex["input"]) + ex["output"] + tok.eos_token}
 
     ds = Dataset.from_list(rows).map(fmt)
     trainer = SFTTrainer(

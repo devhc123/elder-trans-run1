@@ -23,6 +23,7 @@ from verifier.train_lora import (  # noqa: E402
     build_prompt,
     build_target,
     make_dataset,
+    render_prompt,
 )
 
 
@@ -117,6 +118,17 @@ def test_system_forbids_free_form_explanation():
     assert "只输出 JSON" in SYSTEM or "不要解释" in SYSTEM
 
 
+# ---------- 训练/推理共用的对话模板 ----------
+
+def test_render_prompt_is_the_exact_training_prefix():
+    """predict_lora.py 必须复用这个函数——训练时的完整样本文本就是
+    render_prompt(...) 紧接 output 紧接 eos；推理 prompt 只是去掉了 output。"""
+    system, input_, output, eos = "SYS", "IN", "OUT", "<eos>"
+    training_text = render_prompt(system, input_) + output + eos
+    assert training_text == f"<|system|>\nSYS\n<|user|>\nIN\n<|assistant|>\nOUT<eos>"
+    assert training_text.startswith(render_prompt(system, input_))
+
+
 # ---------- 数据集构造 ----------
 
 def test_make_dataset_skips_unlabeled_items():
@@ -128,8 +140,15 @@ def test_make_dataset_skips_unlabeled_items():
 def test_make_dataset_rows_are_training_ready():
     ds = make_dataset([_case()], {"vt-0001": _label()})
     r = ds[0]
-    assert set(r) == {"system", "input", "output"}
+    assert set(r) == {"case_id", "system", "input", "output"}
     assert all(isinstance(v, str) and v for v in r.values())
+
+
+def test_make_dataset_keeps_case_id():
+    """预测产物要按 case_id 与教师标注对齐（eval_verifier.py 按它取键）——
+    丢了这个字段，训完/推完都对不回 verifier/labels/ 里的 gold。"""
+    ds = make_dataset([_case()], {"vt-0001": _label()})
+    assert ds[0]["case_id"] == "vt-0001"
 
 
 # ---------- 序列长度 ----------
@@ -200,6 +219,17 @@ def test_holdout_is_disjoint_from_training():
     tr = {r["input"] for r in _rows(TRAIN)}
     ho = {r["input"] for r in _rows(HOLD)}
     assert not (tr & ho), f"训练/验收集重叠 {len(tr & ho)} 条"
+
+
+def test_case_id_is_disjoint_and_present():
+    """predict_lora.py 靠 case_id 把推理结果对回 eval_verifier.py 的 gold——
+    每行都要有，且训练/验收两侧不能共享同一个 case_id。"""
+    tr = _rows(TRAIN)
+    ho = _rows(HOLD)
+    tr_ids = [r["case_id"] for r in tr]
+    ho_ids = [r["case_id"] for r in ho]
+    assert all(tr_ids) and all(ho_ids)
+    assert not (set(tr_ids) & set(ho_ids))
 
 
 def test_holdout_is_enriched_for_positives():
