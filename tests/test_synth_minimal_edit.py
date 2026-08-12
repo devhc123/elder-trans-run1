@@ -11,12 +11,16 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from verifier.build_teacher_labels import CATEGORY_MARKERS as ALL_CATEGORY_MARKERS  # noqa: E402
 from verifier.synth_minimal_edit import (  # noqa: E402
+    CATEGORY_EXAMPLES,
     CATEGORY_MARKERS,
+    DEFAULT_EXAMPLES,
     find_category_trigger,
     pick_examples,
     synthesize_all,
@@ -60,6 +64,35 @@ def test_pick_examples_matches_known_category_keyword():
 def test_pick_examples_falls_back_to_default_for_unknown_category():
     a, b = pick_examples("某种从未见过的怪异类药物")
     assert a and b  # 兜底也必须给出两个非空示例
+
+
+@pytest.mark.parametrize("context,keyword", [
+    ("本品与黄嘌呤类药合用时需注意。", "黄嘌呤"),
+    ("有长半衰期的磺脲类药需要减量。", "磺脲"),
+    ("糖尿病患者服用双胍类药物时。", "双胍"),
+    ("患者可使用四环素类药治疗。", "四环素"),
+    ("阳性可口服喹诺酮类药物。", "喹诺酮"),
+    ("以及其他大环内酯类药合用。", "大环内酯"),
+    ("青霉素与氨基糖苷类药联用。", "氨基糖苷"),
+    ("酯在内的头孢菌素类药过敏。", "头孢菌素"),
+    ("本品是他汀类药物的一种。", "他汀"),
+    ("不宜和感冒类药同服。", "感冒"),
+])
+def test_pick_examples_covers_train_split_derived_category_roots(context, keyword):
+    """这些关键词/配对全部来自 train 切分兜底案例的频率统计（ticket 12 P3
+    77.1% 落在兜底对的诊断），不是随手加的——扩充目的是让合成命中的类别
+    覆盖面接近真实分布，减少"注入示例单一"这条已知伪影风险。"""
+    a, b = pick_examples(context)
+    assert (a, b) != DEFAULT_EXAMPLES, f"「{keyword}」仍然落在兜底对，词典没覆盖到"
+
+
+def test_new_category_examples_never_pick_the_keyword_itself_as_the_example():
+    """防止"XX类药"这种源文里的类别名本身恰好是具体药名（如"苯巴比妥类药"，
+    苯巴比妥本身既是类名又是具体药）时，示例词选出了跟类别关键词一样的名字——
+    那样注入了等于没注入，候选词会在 `synthesize_minimal_edit` 的
+    "已在原文出现"防护里被直接跳过，浪费一次合成机会。"""
+    for keyword, (a, b) in CATEGORY_EXAMPLES.items():
+        assert keyword not in (a, b), f"「{keyword}」的示例里出现了关键词本身：{(a, b)}"
 
 
 # ---------- synthesize_minimal_edit ----------
