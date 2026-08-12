@@ -51,7 +51,7 @@ metrics:
     parent_classes:
       理解域: [检验报告解读, 医嘱转译, 用药说明, 健康科普]
       推荐域: [权益匹配, 分科医生, 复诊提醒, 用药干预]
-    actual: null
+    actual: 12
     command: python3 pipeline/validate_testset.py
 
   - id: guard_faithfulness

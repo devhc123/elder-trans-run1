@@ -111,6 +111,26 @@ def check_flags(cases: list[dict]) -> list[str]:
     return problems
 
 
+def write_kpi2_actual(cases: list[dict], kpi_path: Path = KPI) -> None:
+    """回填 kpi2_scenario_coverage.actual——它的 command 就是本脚本本身，
+    不需要 --freeze 才算数，此前一直是 null，没有脚本真正写过它。
+
+    只做**局部文本替换**，不做整份 YAML 反序列化再写回：这份文件的大量
+    注释是评审依据的一部分（比如 kpi1 那段"绝对达标率不得单独引用"的
+    披露），`yaml.safe_dump` 会把注释全部吃掉。kpi1 与 guard_faithfulness
+    也各有一处 `actual: null`，朴素全局替换会把它们一起改掉——用
+    kpi2 独有的 `command: python3 pipeline/validate_testset.py` 这一行
+    把替换范围锁定到 kpi2 那一处。
+    """
+    n = len({c["scenario"] for c in cases})
+    text = kpi_path.read_text(encoding="utf-8")
+    old = "    actual: null\n    command: python3 pipeline/validate_testset.py"
+    new = f"    actual: {n}\n    command: python3 pipeline/validate_testset.py"
+    if old in text:
+        text = text.replace(old, new)
+        kpi_path.write_text(text, encoding="utf-8")
+
+
 def freeze(cases: list[dict]) -> None:
     import yaml
 
@@ -170,6 +190,8 @@ def main() -> int:
         return 1
 
     print("\n[OK] 校验通过")
+    if KPI.exists():
+        write_kpi2_actual(cases)
     if args.freeze:
         freeze(cases)
         print(f"已冻结进 kpi.yaml；hard 子集 {sum(1 for c in cases if c['difficulty']=='难')} 题 -> {HARD}")

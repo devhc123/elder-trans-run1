@@ -20,6 +20,7 @@ from pipeline.validate_testset import (  # noqa: E402
     check_flags,
     check_leakage,
     dataset_hash,
+    write_kpi2_actual,
 )
 
 TESTSET = ROOT / "data" / "elder_translate_270.jsonl"
@@ -142,3 +143,67 @@ def test_flag_check_catches_a_forbidden_word_in_query(cases):
     bad = json.loads(json.dumps([c for c in cases if c["scenario"] == "医嘱转译"][:1]))
     bad[0]["query"] = "我的医嘱单上写着什么？"
     assert any("医嘱单" in p for p in check_flags(bad))
+
+
+# ---------- kpi2_scenario_coverage.actual 回填 ----------
+# kpi2 的 command 就是本脚本本身（不需要 --freeze），所以每次校验通过都该
+# 把 actual 填上——它此前一直是 null，从没有脚本真正写过它，是个遗留缺口。
+
+_KPI2_FIXTURE = """\
+metrics:
+
+  - id: kpi1_readability
+    actual: null
+    command: python3 metrics/run_eval.py --live
+
+  - id: kpi2_scenario_coverage
+    target: 10
+    actual_subscenarios: 12
+    actual: null
+    command: python3 pipeline/validate_testset.py
+
+  - id: guard_faithfulness
+    actual: null
+"""
+
+
+def test_kpi2_actual_is_written_from_distinct_scenario_count(tmp_path):
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI2_FIXTURE, encoding="utf-8")
+    fake_cases = [{"scenario": s} for s in ["A", "B", "C", "A", "B"]]  # 3 个不同场景
+
+    write_kpi2_actual(fake_cases, kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    kpi2 = next(m for m in data["metrics"] if m["id"] == "kpi2_scenario_coverage")
+    assert kpi2["actual"] == 3
+
+
+def test_kpi2_actual_write_does_not_disturb_other_actual_null_fields(tmp_path):
+    """kpi1 和 guard_faithfulness 也有 `actual: null`——朴素的全局字符串替换
+    会把它们一起改掉，必须只改 kpi2 那一处。"""
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI2_FIXTURE, encoding="utf-8")
+    fake_cases = [{"scenario": s} for s in ["A", "B", "C"]]
+
+    write_kpi2_actual(fake_cases, kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    assert data["metrics"][0]["actual"] is None, "kpi1 的 actual 被误改了"
+    assert data["metrics"][2]["actual"] is None, "guard_faithfulness 的 actual 被误改了"
+
+
+def test_kpi2_actual_write_is_idempotent(tmp_path):
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI2_FIXTURE, encoding="utf-8")
+    fake_cases = [{"scenario": s} for s in ["A", "B", "C"]]
+
+    write_kpi2_actual(fake_cases, kpi_path=kpi)
+    once = kpi.read_text(encoding="utf-8")
+    write_kpi2_actual(fake_cases, kpi_path=kpi)
+    twice = kpi.read_text(encoding="utf-8")
+    assert once == twice, "重复写入不该产生累积变化"
