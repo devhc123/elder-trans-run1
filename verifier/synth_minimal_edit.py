@@ -327,6 +327,31 @@ def synthesize_all(records: list[dict]) -> list[dict]:
     return _cap_source_concentration(out, MAX_SOURCE_SHARE)
 
 
+def synthetic_records_to_candidates(synth_records: list[dict]) -> list[dict]:
+    """把 `synthesize_all()` 的记录级输出展开成候选级条目——一条实体记录
+    可能注入 2-4 个词，各自展开成一个独立候选；一条数字记录固定展开成 1 个。
+    `label` 恒为 True——这些是"医学正确但原文未给出"的天然违规样本
+    （P3 教师抽检 50/50 已确认确属违规，见 ticket 12）。
+
+    两处调用方共用这份转换：`adversarial_subset.py`（holdout 源文本，用于
+    L2 对抗子集验收）和 `train_lora.py` 的候选级训练集组装（train 源文本，
+    用于训练正例）——两处除了输入的 `records` 来自哪个切分，转换逻辑完全
+    一致，不该各写一份。"""
+    out: list[dict] = []
+    for s in synth_records:
+        for text in s["injected_examples"]:
+            out.append({
+                "case_id": s["case_id"],
+                "source_case_id": s["source_case_id"],
+                "source_text": s["source_text"],
+                "answer": s["synthetic_answer"],
+                "candidate_text": text,
+                "red_line_guess": s["red_line_idx"],
+                "label": True,
+            })
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--build", action="store_true")

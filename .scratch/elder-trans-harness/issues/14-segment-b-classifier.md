@@ -102,16 +102,74 @@ ticket 11 的调参弯路。
       只会让真正要守的份额上限失效）。生产规模（1332条候选级正例，cap≈66）
       下这条上限本来就不生效，此次修复只影响边界行为，不影响已跑出的
       1,332这个数字（源文档集中度实测0.5%远低于门槛，重跑前后数字一致）。
-- [ ] 真实 held-out 候选池：从 `verifier/holdout.jsonl`（499 条 case，训练全程
-      不可见）按同样的"pass案例负例 + fail案例evidence正例"规则重新抽一份候选级
-      验收集，与训练池 record_id 零交集（沿用 ticket 10 的封存纪律）
-- [ ] 训练数据格式改造：`train_lora.py` 现有格式是"一案例→联合JSON"，需要改成
-      "一候选（含最小上下文：source_text+answer+candidate_text）→单个 violated
-      布尔"——这是训练目标的改动，需要 TDD（红→绿），新函数进
-      `verifier/train_lora.py` 或拆到新模块，视代码规模决定
+- [x] **可信候选池构造器**——新模块 `verifier/candidate_pool.py`：
+      `build_trusted_candidate_pool(records, jargon)`，pass 案例的每个候选都是
+      可信负例，fail 案例只保留 evidence 命中的候选当可信正例（未命中的整条
+      丢弃，不猜、不当负例用——这是 P2 方法论缺陷的直接修复）。train/holdout
+      共用同一函数，8 个测试（`tests/test_candidate_pool.py`）。
+- [x] **真实 held-out 候选池**：`python3 verifier/candidate_pool.py --split
+      holdout` -> **1,518 条**（正例 203：红线0 181 / 红线2 22；负例 1315），
+      与训练池 record_id 零交集（train/holdout 本身已验证零交集，见测试
+      `test_holdout_is_disjoint_from_training`）。203 条正例的统计功效足够
+      证 ≤5% 漏报门槛（同 `eval_verifier.py` 的 Wilson 区间纪律）。
+- [x] **对抗子集**：新模块 `verifier/adversarial_subset.py`——不从合成池
+      随手抽，而是**专门用 holdout 源文本重新合成**（`synth_minimal_edit
+      .synthesize_all` 应用于 holdout.jsonl），避免训练时见过的合成样本被
+      拿来测泛化能力（那样测的是记忆力不是泛化）。实测 **560 条**（红线0
+      441 / 红线2 119），远超 L2 门槛 ≥50。`synthetic_records_to_candidates`
+      转换函数迁到 `synth_minimal_edit.py`（`adversarial_subset.py` 与
+      `train_lora.py` 的候选级训练数据组装共用同一份转换，不各写一份）。
+      4 个测试（`tests/test_adversarial_subset.py`）。
+- [x] **训练数据格式改造**：`train_lora.py` 新增候选级 system/prompt/target
+      （`SYSTEM_CANDIDATE`/`build_candidate_prompt`/`build_candidate_target`/
+      `make_candidate_dataset`，输出 schema 从联合 JSON 简化成
+      `{"violated": bool}`）；`oversample_positives` 泛化成接受 `is_positive`
+      谓词（默认值保持案例级 `verdict=="fail"` 完全不变，候选级传
+      `lambda o: o["violated"]` 复用同一套过采样机制，不重写一份）；
+      `build_candidate_training_pool()` 组装最终训练池（惰性导入
+      `candidate_pool`/`redline_candidates`/`synth_minimal_edit`——这几个
+      模块不在 `deploy/runpod_pilot.sh` 的 RunPod 传输清单里，模块顶层
+      import 会在远程训练时炸掉）；CLI `--make-candidate-data` 一键跑通。
+      **实测：候选级训练集 6,747 条（正例 1,332，19.7%——红线0 1,061 /
+      红线2 271；负例 5,415），已写到 `verifier/work/candidate_train.jsonl`**
+      （`verifier/work/` 已 gitignore，不进仓库；重跑 `python3
+      verifier/train_lora.py --make-candidate-data --data verifier/train.jsonl
+      --candidate-data-out verifier/work/candidate_train.jsonl` 即可复现——
+      `--data` 必须显式传，默认值是 cwd 相对路径，从仓库根跑不传会报
+      `FileNotFoundError`，这是刻意的，见下方 code review 修复）。新增 16 个
+      测试（`tests/test_train_lora.py`，28→44 个，全部通过）。
+
+      **`/code-review` 发现并修复三处问题**：① `train()` 不管数据是案例级
+      还是候选级都用案例级默认谓词（`verdict=="fail"`）算过采样，候选级
+      输出 schema 是 `{"violated": bool}`，没有 `verdict` 字段，过采样因此
+      **静默变成 no-op**（`n_fail` 恒 0，不报错）——这正是本脚本自己反复
+      强调"不处理会复现09/11坍缩"的那类问题，没有任何信号能提前发现。
+      新增 `infer_is_positive()` 按输出 schema 自动判定谓词，`train()` 改用
+      它。②`--make-candidate-data` 曾经硬编码读 `verifier/train.jsonl`，
+      忽略 `--data` 标志——现在改读 `args.data`，与 `train()` 的输入路径
+      语义一致（也因此默认值不再静默工作，必须显式传路径，同上）。③候选池
+      为空时 `n_pos / len(ds)` 会抛 `ZeroDivisionError`，改成显式检查并给出
+      可操作的错误信息。三处都补了回归测试。实测数字（6,747/1,332/19.7%）
+      与修复前完全一致——三个 bug 都是边界/健壮性问题，不影响已经跑通的
+      这一次结果。
+
+      候选级正例率 19.7% 远高于案例级红线槽位阳性率 1.6%（ticket 11 的坍缩
+      现场）——候选级重构本身已经把"正负比例极端稀疏"这个 ticket 09/11
+      两次坍缩的根因去掉了大半，不需要在训练前就假设一定要过采样，倍数
+      留给 RunPod 那一步网格搜索决定，不在本票拍死。
 - [ ] RunPod 训练执行——**成本预期与 ticket 11 同量级（$3-5，约几小时机时）**，
       动手前需要用户确认（这是要花钱的步骤，不在"认可中期路线"这句话的
-      自动授权范围内，需要单独拍板）
+      自动授权范围内，需要单独拍板）。执行前还需要更新
+      `deploy/runpod_pilot.sh` 的传输清单（目前只 scp 案例级
+      `train.jsonl`/`holdout.jsonl`，需要换成候选级的
+      `candidate_train.jsonl` 及对应的候选级 holdout/对抗子集文件）——这是
+      RunPod 步骤本身的一部分，不是本票遗留的独立任务。
+- [ ] 候选级验收脚本（`eval_verifier.py` 的候选级对应版本，计算真实held-out
+      池漏报/误报、合成池vs真实池差距、对抗子集miss rate，红线0/2分开报告）
+      ——目前门槛表已经写死要算哪些数字，但算这些数字的脚本还没写。建议
+      在 RunPod 训练产出第一批候选级预测后再写（照 `eval_verifier.py` 当年
+      的节奏——先有真预测再定验收脚本细节，比空对空写容易踩准接口），但
+      如果想在训练前就把脚本连测试都准备好也可以，不阻塞 RunPod 那一步。
 
 ## 判读规则（延续 LITERATURE.md，本票新增说明）
 

@@ -127,8 +127,11 @@ def make_dataset(items: list[dict], labels: dict[str, dict]) -> list[dict]:
     return out
 
 
-def oversample_positives(rows: list[dict], factor: int) -> list[dict]:
-    """把 verdict=fail 的行按 factor 重复，其余行原样保留。
+def oversample_positives(
+    rows: list[dict], factor: int,
+    is_positive=lambda output: output.get("verdict") == "fail",
+) -> list[dict]:
+    """把正例行按 factor 重复，其余行原样保留。
 
     **为什么需要它**：ticket 09 摸底在 6.5% 红线正例比例下朴素 SFT 直接坍缩成
     常量输出（全判 pass，κ=0.024）；ticket 10 扩量到 1955 条后，训练集的红线
@@ -138,14 +141,110 @@ def oversample_positives(rows: list[dict], factor: int) -> list[dict]:
 
     倍数从 1 开始按 held-out 表现网格搜索（ticket 10 的要求），不能拍一个数；
     factor=1 时必须是纯粹的 no-op，方便把"不过采样"也当网格里的一个点跑。
-    """
+
+    `is_positive` 默认按案例级 `verdict=="fail"` 判正例——这是 ticket 09-11
+    案例级联合 JSON 训练一直用的口径，不传参时行为必须与那段历史完全一致。
+    ticket 14 的候选级训练集换了输出 schema（`{"violated": bool}`，没有
+    `verdict` 字段），调用方传 `is_positive=lambda o: o["violated"]` 复用
+    这同一套过采样机制，而不是另写一份重复逻辑。"""
     if factor < 1:
         raise ValueError(f"factor 必须 >=1（会删掉正例），拿到 {factor}")
     out = []
     for r in rows:
-        is_fail = json.loads(r["output"]).get("verdict") == "fail"
-        out.extend([r] * (factor if is_fail else 1))
+        positive = is_positive(json.loads(r["output"]))
+        out.extend([r] * (factor if positive else 1))
     return out
+
+
+# ---------- 候选级训练格式（ticket 14：段B判定头，一候选→单个布尔判定） ----------
+
+SYSTEM_CANDIDATE = """你是医疗转述忠实性判别器的候选判定模块。只以「原文」为事实依据，
+判断「候选」在原文里有没有依据——候选是从「回答」里挑出的疑似越界具体名词/数字。
+
+回答里说了原文没说、但医学上正确的事，仍然记作触犯——你判的是有没有原文依据，
+不是医学上对不对。
+
+例外：如果候选就是这条病例本来问的那个药/病本身的名字（可以从回答其他地方
+的描述内容判断是否对得上），不算触犯，即使没有逐字出现在原文里。
+
+只输出 JSON，不要解释。格式：{"violated": true}"""
+
+
+def build_candidate_prompt(item: dict) -> str:
+    return (
+        f"【原文】\n{item['source_text']}\n\n"
+        f"【回答】\n{item['answer']}\n\n"
+        f"【候选】\n{item['candidate_text']}"
+    )
+
+
+def build_candidate_target(item: dict) -> str:
+    return json.dumps({"violated": item["label"]}, ensure_ascii=False)
+
+
+def make_candidate_dataset(pool: list[dict]) -> list[dict]:
+    """把 `candidate_pool.build_trusted_candidate_pool()` /
+    `synth_minimal_edit.synthetic_records_to_candidates()` 的候选级条目
+    转成训练/推理行。
+
+    候选级 `case_id` 用 `"{来源case_id}::{候选文本}"`——`extract_candidates`
+    在同一案例内本来就按文本去重，同案例内候选文本互不相同，这个组合天然
+    唯一，不需要额外计数器。"""
+    out = []
+    for item in pool:
+        cand_id = f"{item['case_id']}::{item['candidate_text']}"
+        out.append({
+            "case_id": cand_id,
+            "system": SYSTEM_CANDIDATE,
+            "input": build_candidate_prompt(item),
+            "output": build_candidate_target(item),
+        })
+    return out
+
+
+def build_candidate_training_pool(train_records: list[dict]) -> list[dict]:
+    """组装候选级训练池：`verdict=pass` 案例负例 + `verdict=fail` 案例可信
+    正例（`candidate_pool.build_trusted_candidate_pool`）+ train 切分合成
+    正例（`synth_minimal_edit.synthesize_all`）。
+
+    **惰性导入**：`candidate_pool`/`redline_candidates`/`synth_minimal_edit`
+    不在 `deploy/runpod_pilot.sh` 的 RunPod 传输清单里（那份清单只 scp
+    `train_lora.py`/`predict_lora.py`/`train.jsonl`/`holdout.jsonl`）——放在
+    模块顶层 import 会在远程跑 `train()` 时直接炸掉。这个函数只在本机的
+    `--make-candidate-data` 路径下调用，把这份依赖限制在调用路径内。"""
+    root = Path(__file__).resolve().parent.parent
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+    from verifier.candidate_pool import build_trusted_candidate_pool
+    from verifier.redline_candidates import load_jargon
+    from verifier.synth_minimal_edit import synthesize_all, synthetic_records_to_candidates
+
+    jargon = load_jargon()
+    trusted = build_trusted_candidate_pool(train_records, jargon)
+    synthetic = synthetic_records_to_candidates(synthesize_all(train_records))
+    return trusted + synthetic
+
+
+def infer_is_positive(rows: list[dict]):
+    """按数据集的输出 schema 自动选正例判定谓词——案例级看 `verdict==
+    "fail"`，候选级（ticket 14）看 `violated` 布尔本身。
+
+    **回归（code review 发现）**：`train()` 曾经不管数据是案例级还是候选级，
+    永远用案例级的默认谓词（`verdict=="fail"`）算 `n_fail`/`n_fail_after`。
+    候选级的输出 schema 是 `{"violated": bool}`，没有 `verdict` 字段，默认
+    谓词对每一行都判 `None != "fail"` → 恒 False——过采样**静默变成
+    no-op**，`n_fail`/`n_fail_after` 都打印 0，不报错，只是悄悄不起作用，
+    正是这份训练脚本自己的 docstring 反复强调"不处理这一步会复现 09/11
+    坍缩"的那类问题，没有任何信号能提前发现。改成按数据自动判定，不能
+    让调用方凭记忆选对谓词。"""
+    if not rows:
+        raise ValueError("空数据集，无法判定正例谓词")
+    sample = json.loads(rows[0]["output"])
+    if "violated" in sample:
+        return lambda o: bool(o["violated"])
+    if "verdict" in sample:
+        return lambda o: o.get("verdict") == "fail"
+    raise ValueError(f"无法识别的输出 schema（既无 violated 也无 verdict 字段）：{sample}")
 
 
 def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int,
@@ -159,12 +258,13 @@ def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int,
     from trl import SFTConfig, SFTTrainer
 
     rows = [json.loads(l) for l in data_path.read_text(encoding="utf-8").splitlines() if l.strip()]
-    n_fail = sum(1 for r in rows if json.loads(r["output"]).get("verdict") == "fail")
-    print(f"训练样本 {len(rows)}（fail {n_fail}, {n_fail / len(rows):.1%}）")
+    is_positive = infer_is_positive(rows)
+    n_fail = sum(1 for r in rows if is_positive(json.loads(r["output"])))
+    print(f"训练样本 {len(rows)}（正例 {n_fail}, {n_fail / len(rows):.1%}）")
     if oversample_fail > 1:
-        rows = oversample_positives(rows, oversample_fail)
-        n_fail_after = sum(1 for r in rows if json.loads(r["output"]).get("verdict") == "fail")
-        print(f"过采样 x{oversample_fail} 后 {len(rows)}（fail {n_fail_after}, "
+        rows = oversample_positives(rows, oversample_fail, is_positive=is_positive)
+        n_fail_after = sum(1 for r in rows if is_positive(json.loads(r["output"])))
+        print(f"过采样 x{oversample_fail} 后 {len(rows)}（正例 {n_fail_after}, "
               f"{n_fail_after / len(rows):.1%}）")
 
     m, tok = FastLanguageModel.from_pretrained(
@@ -233,7 +333,15 @@ def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int,
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--make-data", action="store_true", help="从标注产出训练集（本机跑）")
-    ap.add_argument("--data", type=Path, default=Path("train.jsonl"))
+    ap.add_argument("--make-candidate-data", action="store_true",
+                    help="组装候选级训练集（ticket 14，本机跑）：train 切分"
+                         "可信池（pass案例负例+fail案例可信正例）+ train 切分"
+                         "合成正例")
+    ap.add_argument("--candidate-data-out", type=Path, default=Path("candidate_train.jsonl"))
+    ap.add_argument("--data", type=Path, default=Path("train.jsonl"),
+                    help="训练输入路径——train() 与 --make-candidate-data 都读它"
+                         "（--make-data 例外：那个模式从 to_label.json/labels/*.jsonl"
+                         "产出案例级数据，--data 只是它的写出路径）")
     ap.add_argument("--out", type=Path, default=Path("./ckpt"))
     ap.add_argument("--model", default=BASE_MODEL)
     ap.add_argument("--epochs", type=int, default=3)
@@ -241,10 +349,40 @@ def main() -> int:
     ap.add_argument("--holdout", type=int, default=0,
                     help="留出多少条做验收（必须在训练前切出并封存）")
     ap.add_argument("--oversample-fail", type=int, default=1,
-                    help="verdict=fail 的行重复几遍（ticket 11 要求：训练集红线正例"
-                         "约 1.6%%，不处理大概率复现 09 的坍缩。从 1（不采样）开始"
-                         "在 held-out 上网格搜索，不要拍一个数）")
+                    help="正例行重复几遍（案例级看 verdict=='fail'，候选级看"
+                         "violated，train() 按输出 schema 自动判定）。ticket 11"
+                         "要求：训练集红线正例曾低到约 1.6%%，不处理大概率复现 09"
+                         "的坍缩。从 1（不采样）开始在 held-out 上网格搜索，"
+                         "不要拍一个数")
     args = ap.parse_args()
+
+    if args.make_candidate_data:
+        # **读 args.data，不硬编码路径**（code review 发现：硬编码曾经让
+        # --data 被静默忽略——同一个标志在这个脚本里既是 train() 的输入，
+        # 也应该是这个模式的输入，不能各写一套）。
+        train_records = [
+            json.loads(line)
+            for line in args.data.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        pool = build_candidate_training_pool(train_records)
+        ds = make_candidate_dataset(pool)
+        if not ds:
+            print("候选级训练集为空——检查 jargon 词表/train 切分触发点是否正常，"
+                  "不是继续往下跑的信号", file=sys.stderr)
+            return 1
+        n_pos = sum(1 for r in ds if json.loads(r["output"])["violated"])
+        n_rl0 = sum(1 for r in pool if r["label"] and r.get("red_line_guess") == 0)
+        n_rl2 = sum(1 for r in pool if r["label"] and r.get("red_line_guess") == 2)
+        print(f"候选级训练集 {len(ds)} 条（正例 {n_pos}，{n_pos / len(ds):.1%}"
+              f"——红线0 {n_rl0} / 红线2 {n_rl2}；负例 {len(ds) - n_pos}）")
+        # 绝不只报总体准确率能算出的假象数字——这里只报正负比例，不是准确率，
+        # 但仍然按项目纪律把红线0/2分开列，供后续训练配置参考。
+        args.candidate_data_out.write_text(
+            "\n".join(json.dumps(r, ensure_ascii=False) for r in ds), encoding="utf-8"
+        )
+        print(f"-> {args.candidate_data_out}")
+        return 0
 
     if args.make_data:
         root = Path(__file__).resolve().parent.parent

@@ -21,8 +21,14 @@ from verifier.train_lora import (  # noqa: E402
     RESPONSE_MARKER,
     SCALE_UP_MODEL,
     SYSTEM,
+    SYSTEM_CANDIDATE,
+    build_candidate_prompt,
+    build_candidate_target,
+    build_candidate_training_pool,
     build_prompt,
     build_target,
+    infer_is_positive,
+    make_candidate_dataset,
     make_dataset,
     oversample_positives,
     render_prompt,
@@ -290,6 +296,178 @@ def test_oversample_positives_rejects_factor_below_one():
     """factor=0 会把正例全部删光，这不是过采样能干的事，必须显式拒绝。"""
     with pytest.raises(ValueError):
         oversample_positives([_row("fail", "a")], 0)
+
+
+# ---------- 候选级训练格式（ticket 14：段B判定头，联合JSON→单候选二分类）
+# ----------
+
+def _candidate_item(label=True, case_id="vt-0001", candidate_text="阿司匹林"):
+    return {
+        "case_id": case_id,
+        "source_text": "本品与抗血小板类药物合用时需注意。",
+        "answer": "医生给您开的是阿司匹林。",
+        "candidate_text": candidate_text,
+        "label": label,
+    }
+
+
+def test_candidate_system_states_the_source_only_discipline():
+    assert "只以" in SYSTEM_CANDIDATE and "原文" in SYSTEM_CANDIDATE
+    assert "医学上正确" in SYSTEM_CANDIDATE or "医学上对" in SYSTEM_CANDIDATE
+
+
+def test_candidate_system_keeps_the_identity_exception_clause():
+    """红线0"复述已知身份不算违规"的例外条款（TEACHER_TASK.md 里最容易
+    判错的一条）——候选级 rubric 必须原样保留，不能训练时悄悄丢了，否则
+    模型会把"这个药叫XX"这类合法复述也判成违规，重演 P2 分歧里
+    "心痛定即硝苯地平"那类误判。"""
+    assert "例外" in SYSTEM_CANDIDATE
+    assert "本来就问的" in SYSTEM_CANDIDATE or "本身的名字" in SYSTEM_CANDIDATE
+
+
+def test_candidate_system_forbids_free_form_explanation():
+    assert "只输出 JSON" in SYSTEM_CANDIDATE or "不要解释" in SYSTEM_CANDIDATE
+
+
+def test_candidate_prompt_contains_source_answer_and_candidate():
+    item = _candidate_item()
+    p = build_candidate_prompt(item)
+    assert item["source_text"] in p
+    assert item["answer"] in p
+    assert item["candidate_text"] in p
+
+
+def test_candidate_target_is_single_line_json_with_violated_key():
+    t = build_candidate_target(_candidate_item(label=True))
+    assert "\n" not in t
+    assert json.loads(t) == {"violated": True}
+
+
+def test_candidate_target_reflects_label_false():
+    t = build_candidate_target(_candidate_item(label=False))
+    assert json.loads(t) == {"violated": False}
+
+
+def test_make_candidate_dataset_rows_are_training_ready():
+    ds = make_candidate_dataset([_candidate_item()])
+    r = ds[0]
+    assert set(r) == {"case_id", "system", "input", "output"}
+    assert all(isinstance(v, str) and v for v in r.values())
+
+
+def test_make_candidate_dataset_case_id_disambiguates_multiple_candidates_per_case():
+    """同一案例的多个候选必须映射到不同的训练行 case_id，否则
+    predict_lora.py 推理完没法把结果一一对回来。"""
+    items = [
+        _candidate_item(candidate_text="阿司匹林"),
+        _candidate_item(candidate_text="氯吡格雷"),
+    ]
+    ds = make_candidate_dataset(items)
+    ids = {r["case_id"] for r in ds}
+    assert len(ids) == 2
+
+
+def test_make_candidate_dataset_preserves_label_in_output():
+    items = [_candidate_item(label=True), _candidate_item(label=False, candidate_text="布洛芬")]
+    ds = make_candidate_dataset(items)
+    labels = {json.loads(r["output"])["violated"] for r in ds}
+    assert labels == {True, False}
+
+
+# ---------- oversample_positives 泛化：候选级 label 谓词（ticket 14）
+# ----------
+
+def _candidate_row(violated, tag="x"):
+    return {
+        "case_id": tag, "system": "s", "input": "i",
+        "output": json.dumps({"violated": violated}),
+    }
+
+
+def test_infer_is_positive_detects_candidate_level_schema():
+    """回归（code review 发现）：`train()` 曾经不管数据是案例级还是候选级，
+    永远用案例级默认谓词——候选级数据的过采样因此静默变成 no-op（`n_fail`
+    恒 0，不报错）。这里守的是自动判定本身：看到 `violated` 字段就用
+    候选级谓词。"""
+    rows = [_candidate_row(True, "a"), _candidate_row(False, "b")]
+    is_positive = infer_is_positive(rows)
+    assert is_positive(json.loads(rows[0]["output"])) is True
+    assert is_positive(json.loads(rows[1]["output"])) is False
+
+
+def test_infer_is_positive_detects_case_level_schema():
+    rows = [_row("fail", "a"), _row("pass", "b")]
+    is_positive = infer_is_positive(rows)
+    assert is_positive(json.loads(rows[0]["output"])) is True
+    assert is_positive(json.loads(rows[1]["output"])) is False
+
+
+def test_infer_is_positive_rejects_empty_dataset():
+    with pytest.raises(ValueError):
+        infer_is_positive([])
+
+
+def test_infer_is_positive_rejects_unknown_schema():
+    rows = [{"case_id": "a", "system": "s", "input": "i",
+             "output": json.dumps({"something_else": True})}]
+    with pytest.raises(ValueError):
+        infer_is_positive(rows)
+
+
+def test_oversample_positives_works_with_candidate_level_predicate():
+    rows = [_candidate_row(False, "a"), _candidate_row(True, "b")]
+    out = oversample_positives(rows, 3, is_positive=lambda o: o["violated"])
+    assert sum(1 for r in out if r["case_id"] == "a") == 1
+    assert sum(1 for r in out if r["case_id"] == "b") == 3
+
+
+def test_oversample_positives_default_predicate_still_matches_case_level_verdict():
+    """回归：泛化成谓词参数后，不传参时行为必须和原来完全一致——这是
+    `train()` 已有调用点、以上一整段既有测试全部沿用的默认行为，不能
+    悄悄变了。"""
+    rows = [_row("pass", "a"), _row("fail", "b")]
+    assert oversample_positives(rows, 3) == oversample_positives(
+        rows, 3, is_positive=lambda o: o.get("verdict") == "fail"
+    )
+
+
+# ---------- 候选级训练池组装（ticket 14：pass案例负例+fail案例可信正例+
+# train切分合成正例） ----------
+
+def _train_style_record(case_id, source, answer, verdict, red_lines=None):
+    red_lines = red_lines or [(0, False, ""), (1, False, ""), (2, False, "")]
+    return {
+        "case_id": case_id,
+        "input": f"【原文】\n{source}\n\n【回答】\n{answer}\n\n【要点】\n0. x",
+        "output": json.dumps({
+            "key_points": [],
+            "red_lines": [{"idx": i, "violated": v, "evidence": e} for i, v, e in red_lines],
+            "verdict": verdict,
+        }, ensure_ascii=False),
+    }
+
+
+def test_build_candidate_training_pool_combines_trusted_and_synthetic():
+    records = [
+        _train_style_record("p1", "本药物用于降压治疗。", "医生给您开的是硝苯地平。", "pass"),
+        _train_style_record("f1", "请遵医嘱。", "医生给您开的是阿司匹林。", "fail",
+                             red_lines=[(0, True, "阿司匹林"), (1, False, ""), (2, False, "")]),
+        _train_style_record("s1", "本品与磺胺类药合用需注意，复查频率必要时而定。", "请遵医嘱。", "pass"),
+    ]
+    # 垫够背景记录，避开 synth_minimal_edit 的源文档集中度上限小样本边界行为
+    records += [
+        _train_style_record(f"pad{i}", "本品属于降压类药物。", "请遵医嘱。", "pass") for i in range(30)
+    ]
+    pool = build_candidate_training_pool(records)
+    labels = {(it["case_id"], it["candidate_text"]): it["label"] for it in pool}
+
+    # 可信池：pass 案例的候选是负例，fail 案例命中 evidence 的候选是正例
+    assert labels.get(("p1", "硝苯地平")) is False
+    assert labels.get(("f1", "阿司匹林")) is True
+    # 合成正例：s1 触发了类别标记和数字标记，产出的合成 case_id 带 -synth 后缀
+    synth_positives = [k for k in labels if k[0].startswith("s1-synth")]
+    assert synth_positives, "s1 的类别/数字触发应该产出至少一条合成正例"
+    assert all(labels[k] is True for k in synth_positives)
 
 
 # ---------- 只在 assistant 段算 loss（否则 prompt 里的原文/回答会把本就
