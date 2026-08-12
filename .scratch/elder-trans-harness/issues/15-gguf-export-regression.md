@@ -1,4 +1,4 @@
-# 12 — GGUF 导出与量化回归验收
+# 15 — GGUF 导出与量化回归验收
 
 **What to build:** 把过了门槛的 verifier 导成 GGUF 跑在 Ollama 上，并证明**量化没有把安全性吃掉**。
 
