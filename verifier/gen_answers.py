@@ -40,22 +40,32 @@ def main() -> int:
             "source_text": c["source_text"],
         }
 
+    # 扩量追加（build_teacher_labels.py --append）会把新样本接到已有 480 条
+    # 后面，其中大部分已经有 answer 了——不跳过就会把 DeepSeek 预算重花一遍。
+    todo = [c for c in items if not c.get("answer")]
+    skipped = len(items) - len(todo)
+    if skipped:
+        print(f"跳过已有回答的 {skipped} 条，只为 {len(todo)} 条新样本生成")
+
     out, done = [], 0
     with cf.ThreadPoolExecutor(12) as ex:
-        futs = {ex.submit(call_model, as_case(c), model, key, base): c for c in items}
+        futs = {ex.submit(call_model, as_case(c), model, key, base): c for c in todo}
         for f in cf.as_completed(futs):
             out.append(f.result()); done += 1
-            if done % 50 == 0 or done == len(items):
-                print(f"  {done}/{len(items)}", flush=True)
+            if done % 50 == 0 or done == len(todo):
+                print(f"  {done}/{len(todo)}", flush=True)
     by = {r["id"]: r for r in out}
     bad = 0
-    for c in items:
+    for c in todo:
         r = by.get(c["case_id"], {})
         c["answer"] = r.get("output") or ""
         c["finish_reason"] = r.get("finish_reason")
         if not c["answer"].strip() or r.get("truncated"):
             bad += 1
-    items = [c for c in items if c["answer"].strip() and not by.get(c["case_id"], {}).get("truncated")]
+    items = [
+        c for c in items
+        if c["answer"].strip() and not (c["case_id"] in by and by[c["case_id"]].get("truncated"))
+    ]
     print(f"剔除空/截断 {bad} 条，剩 {len(items)}")
     (WORK / "to_label.json").write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
     return 0

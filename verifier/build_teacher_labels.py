@@ -56,18 +56,25 @@ SEED = 20260811
 # 难例过采样的配比。教师是 Claude subagent，吞吐低，标注预算是几千条量级
 # 而非几万条——均匀采样会浪费在模型本来就判得对的样本上。
 #
-# 各档的依据全部来自 ticket 08 的实测：
-#   thin_source  原文 <150 字：扩长比中位 4.8x、忠实通过仅 38%，编造重灾区
-#   category     原文含"类""等"这类**上位词**：正是"类别→具体值"越界的触发点
-#   negation     原文含"否""不宜""禁用"：ticket 08 里医保"否"被说反 3 次
-#   conditional  原文含条件分支（"必要时""如果"）：易被简化成确定值
-#   plain        其余，作对照臂——没有对照就读不出难例采样是否真的更难
+# **ticket 09 的 440 条实测证伪了原始配比的三分之二**：thin_source（18.1%）、
+# negation（12.0%）、conditional（17.1%）全部不如 plain 对照臂（26.7%）——
+# 唯一跑赢对照臂的是 category（27.2%）。原配比是 ticket 08 时的设想，重仓
+# 在没有依据的三个桶上；重配后把权重收回给已验证有效的 category 和作为
+# 统计功效来源的 plain，弱桶保留但降到点缀量级（仍需覆盖，只是不再重仓）：
+#   category     原文含"类""等"这类**上位词**：正是「类别→具体值」越界的
+#                触发点，且该越界占全部违规的 76%（红线0+2）——这是唯一
+#                被证实有效的难例信号
+#   plain        对照臂；权重从 0.15 提到 0.30——它本身 fail 率与 category
+#                持平，且 09 摸底证明红线正例的**绝对数量**（不只是比例）
+#                才是训练能不能学会的瓶颈，加大它是最省事的正例来源
+#   thin_source / negation / conditional  证伪但未证否——保留小比例覆盖，
+#                避免训练分布完全不见这几类输入
 SAMPLE_MIX = {
-    "thin_source": 0.25,
-    "category": 0.25,
-    "negation": 0.20,
-    "conditional": 0.15,
-    "plain": 0.15,
+    "category": 0.45,
+    "plain": 0.30,
+    "thin_source": 0.10,
+    "negation": 0.10,
+    "conditional": 0.05,
 }
 
 CATEGORY_MARKERS = ["类药", "类药物", "等药", "等症状", "之类", "一类", "各类", "相关药物"]
@@ -142,12 +149,21 @@ def collect(db: sqlite3.Connection) -> dict[str, list[dict]]:
     return buckets
 
 
-def sample(buckets: dict[str, list[dict]], n: int) -> list[dict]:
+def sample(buckets: dict[str, list[dict]], n: int, exclude: set[str] = frozenset()) -> list[dict]:
+    """按 SAMPLE_MIX 抽 n 条。
+
+    每个桶内部按内容哈希排序后取前 want 条——**与 n 无关的固定顺序**，所以
+    `sample(b, 10)` 的结果必是 `sample(b, 20)` 结果的子集。这条不变量是扩量
+    追加的基础：先跑小样本、标注完，扩量时同一批还会先被选中，只是排在前面。
+
+    `exclude` 用于扩量追加时跳过已经抽过（正在标注池 to_label.json 里）的
+    record_id，防止同一条源文本被抽两次、消耗两份标注预算。
+    """
     out = []
     for b, frac in SAMPLE_MIX.items():
         want = round(n * frac)
         pool = sorted(
-            buckets[b],
+            (c for c in buckets[b] if c["record_id"] not in exclude),
             key=lambda c: hashlib.sha256(f"{SEED}:{b}:{c['record_id']}".encode()).hexdigest(),
         )
         take = pool[:want]
@@ -157,6 +173,23 @@ def sample(buckets: dict[str, list[dict]], n: int) -> list[dict]:
             c["bucket"] = b
         out += take
     return out
+
+
+def assemble(picked: list[dict], start: int) -> list[dict]:
+    """给抽出的样本编号、切要点、挂红线，过滤要点不足 2 条的。
+
+    `start` 是本批第一个 case_id 的序号。**扩量追加时必须传已有标注的
+    `max(case_id) + 1`，不能从 1 重排**——case_id 一旦分配就是
+    `verifier/labels/*.jsonl` 里教师标注的主键，重排会让已标注的 440 条全部
+    对不上号。
+    """
+    out = []
+    for i, c in enumerate(picked):
+        c["case_id"] = f"vt-{start + i:04d}"
+        c["key_points"] = auto_key_points(c["source_text"])
+        c["red_lines"] = UNIVERSAL_RED_LINES
+        out.append(c)
+    return [c for c in out if len(c["key_points"]) >= 2]
 
 
 # 通用红线。**直接来自 ticket 08 的 200 题实测**，不是设想出来的：
@@ -272,23 +305,48 @@ def check() -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--sample", type=int, help="抽样规模")
+    ap.add_argument("--sample", type=int, help="抽样规模（首次建包，会拒绝覆盖已生成回答的旧包）")
+    ap.add_argument("--append", type=int, help="扩量：再抽 N 条追加到现有 to_label.json，"
+                                                "跳过已抽过的 record_id，case_id 接着已有编号走")
     ap.add_argument("--check", action="store_true")
     args = ap.parse_args()
 
     if args.check:
         return check()
-    if not args.sample:
+    if not (args.sample or args.append):
         ap.print_help()
         return 1
 
     WORK.mkdir(parents=True, exist_ok=True)
     LABELS.mkdir(parents=True, exist_ok=True)
+    out = WORK / "to_label.json"
+
+    if args.append:
+        # 扩量走追加，不走覆盖——已标注的 case_id 是 verifier/labels/*.jsonl 的
+        # 主键，任何重排都会让 440 条已完成的标注失去对应关系。
+        if not out.exists():
+            print(f"[拒绝] {out} 不存在，扩量前必须先有一份 --sample 建的底包。", file=sys.stderr)
+            return 1
+        existing = json.loads(out.read_text(encoding="utf-8"))
+        exclude = {c["record_id"] for c in existing}
+        start = max(int(c["case_id"].split("-")[1]) for c in existing) + 1
+
+        with sqlite3.connect(DB) as db:
+            buckets = collect(db)
+        print("各桶规模:", {k: len(v) for k, v in buckets.items()})
+        picked = sample(buckets, args.append, exclude=exclude)
+        print(f"抽出 {len(picked)} 条（已跳过 {len(exclude)} 条已在池中的）")
+
+        added = assemble(picked, start)
+        print(f"过滤掉要点不足 2 条的，新增 {len(added)} 条（case_id 从 vt-{start:04d} 起）")
+
+        out.write_text(json.dumps(existing + added, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"-> {out}（合计 {len(existing) + len(added)} 条）")
+        return 0
 
     # 防覆盖：to_label.json 在 gen_answers 之后会带上 answer 字段，重跑 --sample
     # 会把它连同已生成的回答一起冲掉。实测踩过一次（8 分钟的生成差点作废，
-    # 靠 packets/ 里的副本才救回来）。
-    out = WORK / "to_label.json"
+    # 靠 packets/ 里的副本才救回来）。扩量请用 --append，不要重跑 --sample。
     if out.exists():
         try:
             prev = json.loads(out.read_text(encoding="utf-8"))
@@ -298,7 +356,7 @@ def main() -> int:
             print(
                 f"[拒绝] {out} 已含 {sum(1 for c in prev if c.get('answer'))} 条生成好的回答，"
                 "重抽会把它们冲掉。\n"
-                "确实要重抽就先手动改名备份，或删掉该文件。",
+                "要扩量用 --append N；确实要重抽就先手动改名备份，或删掉该文件。",
                 file=sys.stderr,
             )
             return 1
@@ -308,14 +366,10 @@ def main() -> int:
     picked = sample(buckets, args.sample)
     print(f"抽出 {len(picked)} 条")
 
-    for i, c in enumerate(picked):
-        c["case_id"] = f"vt-{i + 1:04d}"
-        c["key_points"] = auto_key_points(c["source_text"])
-        c["red_lines"] = UNIVERSAL_RED_LINES
-    picked = [c for c in picked if len(c["key_points"]) >= 2]
-    print(f"过滤掉要点不足 2 条的，剩 {len(picked)} 条")
+    assembled = assemble(picked, start=1)
+    print(f"过滤掉要点不足 2 条的，剩 {len(assembled)} 条")
 
-    out.write_text(json.dumps(picked, ensure_ascii=False, indent=2), encoding="utf-8")
+    out.write_text(json.dumps(assembled, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"-> {out}")
     return 0
 
