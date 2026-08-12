@@ -49,7 +49,7 @@ def build_trusted_candidate_pool(records: list[dict], jargon: set[str]) -> list[
             if is_pass:
                 label = False
             else:
-                if not derive_candidate_label(c["text"], gold):
+                if not derive_candidate_label(c["text"], c["kind"], gold):
                     continue
                 label = True
             pool.append({

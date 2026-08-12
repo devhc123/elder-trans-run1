@@ -120,6 +120,20 @@ def make_dataset(items: list[dict], labels: dict[str, dict]) -> list[dict]:
         lab = labels.get(c["case_id"])
         if not lab:
             continue
+        # **独立第二意见代码审计发现**：build_prompt 按位置索引筛红线
+        # （c["red_lines"] 是纯字符串列表，没有 idx 字段——UNIVERSAL_RED_LINES
+        # 本来就按 idx 顺序写死），build_target 按 label["red_lines"][i]["idx"]
+        # 筛——两者隐含同一个假设："第 i 位就是红线 i"。这个假设目前对全量
+        # train/holdout 数据成立（已用脚本核对过 0 条例外），但代码里没有
+        # 任何东西强制它——一旦上游改动顺序（比如换一种红线来源、合并多批
+        # 标注），prompt 显示的红线和 target 输出的红线就会静默错位：模型
+        # 训练"看起来正常跑完"，但每条红线判断学到的是错位关系，训完才会
+        # 发现。这里显式断言，假设被打破时立刻报错，不是训完才发现。
+        for i, rl in enumerate(lab["red_lines"]):
+            assert rl["idx"] == i, (
+                f"{c['case_id']}: red_lines[{i}]['idx']={rl['idx']}，与位置不符——"
+                "build_prompt/build_target 都假设「位置即 idx」，这个案例打破了它"
+            )
         # case_id 必须留着：predict_lora.py 在 RunPod 上推理完，靠它把结果
         # 对回 verifier/labels/ 的教师标注——不留就没法喂给 eval_verifier.py。
         out.append({"case_id": c["case_id"], "system": SYSTEM,

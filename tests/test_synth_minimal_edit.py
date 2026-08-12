@@ -31,8 +31,10 @@ from verifier.synth_minimal_edit import (  # noqa: E402
     CATEGORY_MARKERS,
     DEFAULT_EXAMPLES,
     MAX_SOURCE_SHARE,
+    NUMERIC_INJECTIONS,
     NUMERIC_TRIGGER_MARKERS,
     _cap_source_concentration,
+    _NUMERIC_HOLDOUT_RESERVED,
     find_category_triggers,
     find_numeric_trigger,
     pick_examples,
@@ -79,12 +81,15 @@ def test_pick_examples_falls_back_to_default_for_unknown_category():
     assert len(examples) >= 2  # 兜底也必须给出至少两个非空示例
 
 
-def test_pick_examples_returns_at_least_two_and_at_most_four():
-    """(a) 单案例注入 3-4 个类别成员——L4 决断：方向安全但要有上限，
-    列表过长的枚举句读起来不自然，反而更像"合成伪影"。"""
+def test_pick_examples_returns_at_least_one_and_at_most_three_for_train():
+    """(a) 单案例注入最多 3 个类别成员（CATEGORY_EXAMPLES 全量最多 4 个，
+    train 只用留给自己的那部分，见 train/holdout 词表隔离）——L4 决断：
+    方向安全但要有上限，列表过长的枚举句读起来不自然，反而更像"合成伪影"。
+    只有 2 个成员的类别拆完 train 只剩 1 个，这是隔离设计的必然代价，
+    不是回归。"""
     for keyword in CATEGORY_EXAMPLES:
         examples = pick_examples(f"这属于{keyword}类药物范畴")
-        assert 2 <= len(examples) <= 4, f"「{keyword}」注入数量越界: {len(examples)}"
+        assert 1 <= len(examples) <= 3, f"「{keyword}」注入数量越界: {len(examples)}"
 
 
 @pytest.mark.parametrize("context,keyword", [
@@ -109,6 +114,58 @@ def test_pick_examples_covers_train_split_derived_category_roots(context, keywor
 def test_new_category_examples_never_pick_the_keyword_itself_as_the_example():
     for keyword, examples in CATEGORY_EXAMPLES.items():
         assert keyword not in examples, f"「{keyword}」的示例里出现了关键词本身：{examples}"
+
+
+# ---------- train/holdout 词表隔离（独立第二意见代码审计发现：实测原本
+# train 合成正例与 holdout 对抗子集注入词汇 100% 重叠） ----------
+
+def test_pick_examples_train_and_holdout_pools_are_disjoint():
+    for keyword in CATEGORY_EXAMPLES:
+        ctx = f"这属于{keyword}类药物范畴"
+        train_ex = set(pick_examples(ctx, holdout=False))
+        holdout_ex = set(pick_examples(ctx, holdout=True))
+        assert not (train_ex & holdout_ex), f"「{keyword}」train/holdout 示例有重叠"
+        assert train_ex and holdout_ex, f"「{keyword}」某一侧被拆空了"
+
+
+def test_pick_examples_holdout_pool_still_falls_back_to_default_for_unknown_category():
+    examples = pick_examples("某种从未见过的怪异类药物", holdout=True)
+    assert examples and set(examples) <= set(DEFAULT_EXAMPLES)
+
+
+def test_default_examples_train_and_holdout_pools_are_disjoint():
+    """兜底组本身也要遵守同一条隔离纪律，不能因为是"兜底"就漏了。"""
+    train_ex = set(pick_examples("某种从未见过的怪异类药物", holdout=False))
+    holdout_ex = set(pick_examples("某种从未见过的怪异类药物", holdout=True))
+    assert not (train_ex & holdout_ex)
+
+
+def test_numeric_injections_train_and_holdout_pools_are_disjoint():
+    train_pool = set(NUMERIC_INJECTIONS[:-_NUMERIC_HOLDOUT_RESERVED])
+    holdout_pool = set(NUMERIC_INJECTIONS[-_NUMERIC_HOLDOUT_RESERVED:])
+    assert not (train_pool & holdout_pool)
+    assert train_pool and holdout_pool
+
+
+def test_word_pool_assignment_has_no_cross_category_leakage():
+    """回归：第一版"每个类别自己拆最后一个成员"防不住跨类别撞车——
+    同一个具体药名（如"对乙酰氨基酚"）会同时出现在多个类别的示例列表里
+    （如"镇痛"和 DEFAULT_EXAMPLES 兜底组），按类别内部拆分时，这个词可能
+    在 A 类别被分进 train、在 B 类别又被分进 holdout，全局汇总后 train
+    词表和 holdout 词表就会有交集。这里遍历全部类别（含兜底组），汇总出
+    完整的 train 侧词表与 holdout 侧词表，断言两者互不相交——这是"任何
+    一个词无论出现在哪个类别，归属必须全局一致"这条不变量的直接验证。"""
+    train_words: set[str] = set()
+    holdout_words: set[str] = set()
+    for keyword in CATEGORY_EXAMPLES:
+        ctx = f"这属于{keyword}类药物范畴"
+        train_words.update(pick_examples(ctx, holdout=False))
+        holdout_words.update(pick_examples(ctx, holdout=True))
+    train_words.update(pick_examples("从未出现过的怪异占位符类药物", holdout=False))
+    holdout_words.update(pick_examples("从未出现过的怪异占位符类药物", holdout=True))
+
+    overlap = train_words & holdout_words
+    assert not overlap, f"跨类别撞车导致 train/holdout 词表有交集: {overlap}"
 
 
 # ---------- find_category_triggers：多标记点 ----------
@@ -160,6 +217,16 @@ def test_injects_specific_examples_not_present_in_source():
     assert item["red_line_idx"] == 0
     assert item["verdict"] == "fail"
     assert item["source_case_id"] == "vt-0002"
+
+
+def test_synthesize_entity_edits_holdout_flag_uses_disjoint_examples():
+    r = _record("vt-0002", "本品与抗血小板类药物合用时需注意。", "用药时要小心。")
+    train_out = synthesize_entity_edits(r, holdout=False)
+    holdout_out = synthesize_entity_edits(r, holdout=True)
+    train_words = set(train_out[0]["injected_examples"])
+    holdout_words = set(holdout_out[0]["injected_examples"])
+    assert train_words and holdout_words
+    assert not (train_words & holdout_words)
 
 
 def test_multiple_distinct_categories_produce_multiple_synthetic_entries():
@@ -225,6 +292,16 @@ def test_numeric_edit_is_deterministic_across_runs():
     assert synthesize_numeric_edit(r) == synthesize_numeric_edit(r)
 
 
+def test_synthesize_numeric_edit_holdout_flag_uses_disjoint_pool():
+    r = _record("vt-0020", "是否需要复查，视情况由医生决定。", "按时吃药，注意休息。")
+    train_out = synthesize_numeric_edit(r, holdout=False)
+    holdout_out = synthesize_numeric_edit(r, holdout=True)
+    assert train_out is not None and holdout_out is not None
+    assert train_out["injected_examples"][0] != holdout_out["injected_examples"][0]
+    assert train_out["injected_examples"][0] in NUMERIC_INJECTIONS[:-_NUMERIC_HOLDOUT_RESERVED]
+    assert holdout_out["injected_examples"][0] in NUMERIC_INJECTIONS[-_NUMERIC_HOLDOUT_RESERVED:]
+
+
 # ---------- synthesize_all：合并 + 源文档集中度上限 ----------
 
 def test_synthesize_all_skips_records_without_trigger_and_keeps_the_rest():
@@ -240,6 +317,29 @@ def test_synthesize_all_skips_records_without_trigger_and_keeps_the_rest():
     ids = {item["case_id"] for item in out}
     assert "b-synth" in ids
     assert not any(item["source_case_id"] == "a" for item in out)
+
+
+def test_synthesize_all_holdout_vocabulary_never_overlaps_train_vocabulary():
+    """端到端回归（独立第二意见代码审计发现）：train 合成正例与 holdout
+    对抗子集必须没有共同的注入词——哪怕两边用**同一份**触发内容（同一个
+    案例既当 train 输入又当 holdout 输入喂进去，模拟"两个 split 里各有
+    一条提到同一类别/触发词的案例"这个真实场景），产出的注入词表也不能
+    重叠，否则对抗子集测的是记忆力不是泛化。"""
+    records = [
+        _record("shared", "本品与抗血小板类药物合用需注意，复查频率必要时而定。", "请遵医嘱。"),
+    ]
+    records += [
+        _record(f"pad{i}", "本品属于降压类药物，复查酌情而定。", "请遵医嘱。") for i in range(25)
+    ]
+    train_synth = synthesize_all(records, holdout=False)
+    holdout_synth = synthesize_all(records, holdout=True)
+
+    train_words = {w for s in train_synth for w in s["injected_examples"]}
+    holdout_words = {w for s in holdout_synth for w in s["injected_examples"]}
+    assert train_words and holdout_words
+    assert not (train_words & holdout_words), (
+        f"train/holdout 注入词汇有重叠: {train_words & holdout_words}"
+    )
 
 
 def test_synthesize_all_combines_entity_and_numeric_red_lines():

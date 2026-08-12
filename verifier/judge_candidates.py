@@ -21,7 +21,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from verifier.redline_candidates import (  # noqa: E402
+    CN_NUMERAL_RE,
     COVERED_RED_LINE_IDXS,
+    DIGIT_RE,
+    FRACTION_RE,
     extract_candidates,
     load_jargon,
     parse_case_text,
@@ -30,13 +33,33 @@ from verifier.redline_candidates import (  # noqa: E402
 WORK = ROOT / "verifier" / "work"
 SEED = 20260813
 
+# 数字/中文数词/分数候选必须整段匹配 evidence，不能用朴素子串——同
+# extract_candidates 的"是否已在原文"判定同一套纪律：`"12" in "112mg"`
+# 为真但 12≠112。词表词（lexicon）沿用子串判定，中文复合词的子串关系
+# 通常仍是同一实体。
+_EXACT_MATCH_REGEX = {"digit": DIGIT_RE, "cn_numeral": CN_NUMERAL_RE, "fraction": FRACTION_RE}
 
-def derive_candidate_label(candidate_text: str, gold: dict) -> bool:
-    """候选文本是否落在某条**已判违规**的红线 0/2 evidence 子串里。"""
+
+def derive_candidate_label(candidate_text: str, kind: str, gold: dict) -> bool:
+    """候选文本是否落在某条**已判违规**的红线 0/2 evidence 里。
+
+    **回归（独立第二意见代码审计发现）**：曾经不分 kind 一律用朴素子串
+    `candidate_text in rl["evidence"]`，与 extract_candidates 早先修过的
+    同一类 bug（"12" in "112" 为真）——实测在 train+holdout 全池里造出
+    3 条真实假正例（如 evidence "每分钟100～120次" 里的候选"1""2"被
+    误判命中）。数量不大，但派生 gold 本来就是给"教师逐候选判定一致率"
+    这类评测当参照系用的，参照系本身错了比评测噪声更难发现。"""
+    exact_re = _EXACT_MATCH_REGEX.get(kind)
     for rl in gold["red_lines"]:
         if rl["idx"] not in COVERED_RED_LINE_IDXS:
             continue
-        if rl["violated"] and candidate_text in rl["evidence"]:
+        if not rl["violated"]:
+            continue
+        evidence = rl["evidence"]
+        if exact_re is not None:
+            if candidate_text in exact_re.findall(evidence):
+                return True
+        elif candidate_text in evidence:
             return True
     return False
 
@@ -55,7 +78,7 @@ def build_candidate_pool(records: list[dict], jargon: set[str]) -> list[dict]:
                 "candidate_text": c["text"],
                 "kind": c["kind"],
                 "red_line_guess": c["red_line_guess"],
-                "derived_label": derive_candidate_label(c["text"], gold),
+                "derived_label": derive_candidate_label(c["text"], c["kind"], gold),
             })
     return pool
 

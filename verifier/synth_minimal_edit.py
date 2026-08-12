@@ -168,11 +168,53 @@ def find_category_triggers(source_text: str) -> list[str]:
     return out
 
 
-def pick_examples(context_window: str) -> tuple[str, ...]:
-    """按上下文窗口里出现的类别关键词挑示例药名（2-4 个），没匹配到就用
-    兜底组。"""
+# 每个"词"（不是每个类别！）只属于 train 或 holdout 一侧——独立第二意见
+# 代码审计发现：train 的合成正例和 holdout 的对抗子集共用同一份固定
+# CATEGORY_EXAMPLES，实测注入词汇 100% 重叠。第一版修复按"每个类别自己
+# 的最后一个成员留给 holdout"分，结果还是有 2 个词漏网（"对乙酰氨基酚"
+# 在"镇痛"类别是 train 成员、在 DEFAULT_EXAMPLES 兜底组又是 holdout 成员；
+# "阿奇霉素"同理跨"抗生素"/"大环内酯"两个类别）——同一个具体药名会在多个
+# 类别的示例列表里重复出现，按类别内部拆分防不住跨类别撞车。
+#
+# 改成先给**每个全局唯一的词**定死归属，再按类别取子集：贪心处理每个
+# 类别，从后往前找一个"还没被别的类别定成 train"的成员当这个类别的
+# holdout 代表；找不到（极端情况——这个类别的所有成员都已被更早处理的
+# 类别定成 train）就退化为用最后一个成员（可能产生残余冲突，用测试兜底，
+# 实测全部 32 组类别+兜底组都能找到不冲突的分配，不需要这条退化路径）。
+def _build_word_pools() -> dict[str, str]:
+    assignment: dict[str, str] = {}
+    groups = list(CATEGORY_EXAMPLES.items()) + [("__default__", DEFAULT_EXAMPLES)]
+    for _, members in groups:
+        holdout_word = next((w for w in reversed(members) if assignment.get(w) != "train"), None)
+        if holdout_word is None:
+            holdout_word = members[-1]
+        assignment[holdout_word] = "holdout"
+        for w in members:
+            if w != holdout_word and w not in assignment:
+                assignment[w] = "train"
+    return assignment
+
+
+_WORD_POOL_ASSIGNMENT = _build_word_pools()
+
+
+def _train_pool(members: tuple[str, ...]) -> tuple[str, ...]:
+    pool = tuple(w for w in members if _WORD_POOL_ASSIGNMENT.get(w) != "holdout")
+    return pool or members[:1]
+
+
+def _holdout_pool(members: tuple[str, ...]) -> tuple[str, ...]:
+    pool = tuple(w for w in members if _WORD_POOL_ASSIGNMENT.get(w) == "holdout")
+    return pool or members[-1:]
+
+
+def pick_examples(context_window: str, *, holdout: bool = False) -> tuple[str, ...]:
+    """按上下文窗口里出现的类别关键词挑示例药名，没匹配到就用兜底组。
+    `holdout=True` 时只从每个类别留给验收用的那部分成员里选，与 train
+    用的成员在**全局词表级别**互不重叠（见上方注释）。"""
     key = _resolve_category_key(context_window)
-    return CATEGORY_EXAMPLES[key] if key is not None else DEFAULT_EXAMPLES
+    members = CATEGORY_EXAMPLES[key] if key is not None else DEFAULT_EXAMPLES
+    return _holdout_pool(members) if holdout else _train_pool(members)
 
 
 def find_numeric_trigger(source_text: str) -> str | None:
@@ -196,13 +238,21 @@ def _template_for(seed_key: str) -> str:
     return TEMPLATES[int(digest, 16) % len(TEMPLATES)]
 
 
-def _pick_numeric_injection(seed_key: str, nsrc: str) -> str | None:
+# 同 CATEGORY_EXAMPLES 的 train/holdout 拆分理由：数字类注入也不能让
+# train 和 holdout 对抗子集共用同一份固定短语。
+_NUMERIC_HOLDOUT_RESERVED = 3  # 最后 3 条只给 holdout 用，其余给 train
+
+
+def _pick_numeric_injection(seed_key: str, nsrc: str, *, holdout: bool = False) -> str | None:
     """确定性挑一条编造数字/频次说明，且其中的数字/数词不能恰好已经在
-    原文出现（否则就是巧合为真，不是违规）。全部候选都冲突则返回 None。"""
+    原文出现（否则就是巧合为真，不是违规）。全部候选都冲突则返回 None。
+    `holdout=True` 时只从 train 未用过的那几条里选。"""
+    pool = (NUMERIC_INJECTIONS[-_NUMERIC_HOLDOUT_RESERVED:] if holdout
+            else NUMERIC_INJECTIONS[:-_NUMERIC_HOLDOUT_RESERVED])
     digest = hashlib.sha256(seed_key.encode()).hexdigest()
-    start_idx = int(digest, 16) % len(NUMERIC_INJECTIONS)
-    for offset in range(len(NUMERIC_INJECTIONS)):
-        candidate = NUMERIC_INJECTIONS[(start_idx + offset) % len(NUMERIC_INJECTIONS)]
+    start_idx = int(digest, 16) % len(pool)
+    for offset in range(len(pool)):
+        candidate = pool[(start_idx + offset) % len(pool)]
         nums = DIGIT_RE.findall(candidate) + CN_NUMERAL_RE.findall(candidate)
         if any(normalize(n) in nsrc for n in nums):
             continue
@@ -210,11 +260,15 @@ def _pick_numeric_injection(seed_key: str, nsrc: str) -> str | None:
     return None
 
 
-def synthesize_entity_edits(record: dict) -> list[dict]:
-    """对一条 train 记录做红线0（类别→具体值越界）最小编辑合成——**一案例
-    可产出多条**：每个不同的类别标记点各出一条（L4 决断 (b)），挑出的示例
-    若恰好已在原文出现（会变成"巧合为真"），单独跳过那一条而不影响其他。
-    没有任何类别触发信号，返回空列表。"""
+def synthesize_entity_edits(record: dict, *, holdout: bool = False) -> list[dict]:
+    """对一条记录做红线0（类别→具体值越界）最小编辑合成——**一案例可产出
+    多条**：每个不同的类别标记点各出一条（L4 决断 (b)），挑出的示例若恰好
+    已在原文出现（会变成"巧合为真"），单独跳过那一条而不影响其他。没有
+    任何类别触发信号，返回空列表。
+
+    `holdout=True` 时只从每个类别留给验收用的成员里选（`pick_examples`），
+    与 train 用的成员互不重叠——防止 train 合成正例和 holdout 对抗子集
+    共用同一份固定词表（独立第二意见代码审计发现：实测原本 100% 重叠）。"""
     source_text, answer = parse_case_text(record["input"])
     contexts = find_category_triggers(source_text)
     if not contexts:
@@ -223,7 +277,7 @@ def synthesize_entity_edits(record: dict) -> list[dict]:
     nsrc = normalize(source_text)
     out: list[dict] = []
     for i, context in enumerate(contexts):
-        examples = pick_examples(context)
+        examples = pick_examples(context, holdout=holdout)
         if any(normalize(e) in nsrc for e in examples):
             continue
         seed_key = f"{record['case_id']}:{i}"
@@ -244,18 +298,19 @@ def synthesize_entity_edits(record: dict) -> list[dict]:
     return out
 
 
-def synthesize_numeric_edit(record: dict) -> dict | None:
-    """对一条 train 记录做红线2（编造数字/频次）最小编辑合成（L4 决断
-    (c)）——沿用 L1 的规则最小编辑方法论，number swap 与 entity swap 是
-    FactCC 同一套机制的两种参数化。没有数字触发信号，或所有候选编造值都
-    与原文数字冲突，返回 None。"""
+def synthesize_numeric_edit(record: dict, *, holdout: bool = False) -> dict | None:
+    """对一条记录做红线2（编造数字/频次）最小编辑合成（L4 决断 (c)）——
+    沿用 L1 的规则最小编辑方法论，number swap 与 entity swap 是 FactCC
+    同一套机制的两种参数化。没有数字触发信号，或所有候选编造值都与原文
+    数字冲突，返回 None。`holdout=True` 见 `synthesize_entity_edits` 同款
+    train/holdout 词表隔离理由。"""
     source_text, answer = parse_case_text(record["input"])
     context = find_numeric_trigger(source_text)
     if context is None:
         return None
 
     nsrc = normalize(source_text)
-    injection = _pick_numeric_injection(f"numeric:{record['case_id']}", nsrc)
+    injection = _pick_numeric_injection(f"numeric:{record['case_id']}", nsrc, holdout=holdout)
     if injection is None:
         return None
 
@@ -315,13 +370,19 @@ def _cap_source_concentration(items: list[dict], max_share: float) -> list[dict]
     return current
 
 
-def synthesize_all(records: list[dict]) -> list[dict]:
+def synthesize_all(records: list[dict], *, holdout: bool = False) -> list[dict]:
     """红线0（实体，可一案例多条）+ 红线2（数字，一案例至多一条）合成正例，
-    并强制执行源文档集中度上限（`MAX_SOURCE_SHARE`，L4）。"""
+    并强制执行源文档集中度上限（`MAX_SOURCE_SHARE`，L4）。
+
+    `holdout=True`（`adversarial_subset.py` 用）与默认的 `holdout=False`
+    （`train_lora.py` 的训练正例用）从每个类别/数字候选池里选不重叠的
+    成员——两处调用方必须用不同的值调用，否则对抗子集会和训练正例共用
+    注入词表，验收分数不代表真实泛化（独立第二意见代码审计发现的问题，
+    已修）。"""
     out: list[dict] = []
     for r in records:
-        out += synthesize_entity_edits(r)
-        numeric = synthesize_numeric_edit(r)
+        out += synthesize_entity_edits(r, holdout=holdout)
+        numeric = synthesize_numeric_edit(r, holdout=holdout)
         if numeric is not None:
             out.append(numeric)
     return _cap_source_concentration(out, MAX_SOURCE_SHARE)

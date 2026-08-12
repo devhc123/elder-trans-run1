@@ -108,8 +108,13 @@ def extract_candidates(source_text: str, answer: str, jargon: set[str]) -> list[
         out.append({"text": text, "kind": kind, "red_line_guess": red_line_guess})
 
     for w in jargon:
-        if w in nans:
-            add(w, "lexicon", 0, already_grounded=w in nsrc)
+        # 词表词也要 normalize 再比较——nsrc/nans 都做过 NFKC+去空白，
+        # 词表词若原样保留全角字符/空格（如"维生素 C"）就匹配不上规范化后
+        # 的原文/回答，导致已在原文的实体被误判成"新增候选"（独立第二意见
+        # 代码审计发现，当前词表未实测命中，但属于潜在的静默误判）。
+        nw = normalize(w)
+        if nw in nans:
+            add(nw, "lexicon", 0, already_grounded=nw in nsrc)
     for m in FRACTION_RE.finditer(nans):
         t = m.group()
         add(t, "fraction", 0, already_grounded=t in src_fractions)

@@ -6,11 +6,16 @@ CATEGORY_EXAMPLES 里的示例药名都是真实存在的同类药物、数字�
 频次/时长，只是没出现在这条 source_text 里——这正是 L2 要的对抗模式，
 不需要额外构造，直接复用 `synth_minimal_edit.synthesize_all` 的合成逻辑。
 
-**只从 holdout 源文本生成，绝不进训练集。** 如果拿训练时用过的合成样本
-（哪怕是同一模式、不同案例）做验收，测的是泛化到"这套注入词表"的能力，
-不是泛化到"这条具体 source_text 没给的东西"——用 holdout 独有的源文本
-生成，保证对抗子集与训练数据在 case 级别零交集（train/holdout 本身
-record_id 零交集，见 ticket 10 封存纪律）。
+**只从 holdout 源文本生成，绝不进训练集，且不与训练用的注入词表共享
+成员。** 早期实现只保证了 case 级零交集（holdout 源文本≠train 源文本），
+但 `synthesize_all` 用的是同一份固定 `CATEGORY_EXAMPLES`/`NUMERIC_
+INJECTIONS`——独立第二意见代码审计发现：这样构造出来的对抗子集，注入
+词汇与训练正例 **100% 重叠**（holdout 里出现的每一个词，train 训练时
+都见过），模型可能靠"记住这些固定词"而不是真正判断"这个词有没有原文
+依据"就把对抗子集答对，L2 门槛的分数会被词表级泄漏撑高。已修：
+`synthesize_all(records, holdout=True)` 只从每个类别/数字候选池里留给
+验收用的那部分成员选，与 train 用的成员（`holdout=False`，默认值）
+互不重叠。
 
 用法：
     python3 verifier/adversarial_subset.py
@@ -34,7 +39,7 @@ MIN_SIZE = 50  # L2 判读规则的门槛
 
 
 def build_adversarial_subset(records: list[dict]) -> list[dict]:
-    return synthetic_records_to_candidates(synthesize_all(records))
+    return synthetic_records_to_candidates(synthesize_all(records, holdout=True))
 
 
 def main() -> int:
