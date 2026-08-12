@@ -1,14 +1,22 @@
-"""P3：最小编辑对合成的测试（ticket 12）。
+"""P3/ticket14：最小编辑对合成的测试。
 
 L1 判读规则的硬约束：**规则最小编辑，不许 LLM 自由重写**——防止合成负例
 带来源伪影（arXiv:2606.01304）。这里守的是：只在源文本里已出现"类别"标记词
-（如"XX类药物"）时才合成；注入的具体词不能恰好已经在原文里出现（否则就不是
-违规了，是巧合真话）；同一 case_id 的合成结果必须确定性可复现（不能用带盐的
-`hash()`，否则同一输入两次运行给出不同注入词/模板，没法审计）。
+（如"XX类药物"）或"数字模糊"标记词（如"遵医嘱"）时才合成；注入的具体
+词/数不能恰好已经在原文里出现（否则就不是违规了，是巧合真话）；同一
+case_id 的合成结果必须确定性可复现（不能用带盐的 `hash()`）。
+
+L4（ticket 14 扩量文献核对）新增两条纪律，本文件也守：
+- 同一案例若有多处不同类别标记，各出一条合成样本（但同一类别不重复出）；
+- 单案例可以注入 3-4 个类别成员而非固定 2 个；
+- 新增红线2（编造数字/频次）最小编辑合成，与红线0分开统计；
+- 源文档集中度上限——任一 source_case_id 贡献的合成正例数不得超过总数的
+  一个封顶比例。
 """
 from __future__ import annotations
 
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pytest
@@ -17,14 +25,20 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from verifier.build_teacher_labels import CATEGORY_MARKERS as ALL_CATEGORY_MARKERS  # noqa: E402
+from verifier.build_teacher_labels import CONDITIONAL_MARKERS as ALL_CONDITIONAL_MARKERS  # noqa: E402
 from verifier.synth_minimal_edit import (  # noqa: E402
     CATEGORY_EXAMPLES,
     CATEGORY_MARKERS,
     DEFAULT_EXAMPLES,
-    find_category_trigger,
+    MAX_SOURCE_SHARE,
+    NUMERIC_TRIGGER_MARKERS,
+    _cap_source_concentration,
+    find_category_triggers,
+    find_numeric_trigger,
     pick_examples,
     synthesize_all,
-    synthesize_minimal_edit,
+    synthesize_entity_edits,
+    synthesize_numeric_edit,
 )
 
 
@@ -35,35 +49,42 @@ def test_category_markers_is_a_deliberate_subset_of_the_canonical_list():
     不是要拉平成完全一致。"""
     assert set(CATEGORY_MARKERS) <= set(ALL_CATEGORY_MARKERS)
     assert all("药" in m for m in CATEGORY_MARKERS)
-    # 不能收窄到空——那就没法合成任何东西了
     assert CATEGORY_MARKERS
+
+
+def test_numeric_trigger_markers_is_a_deliberate_subset_of_conditional_markers():
+    """同一纪律用在数字触发词上：只挑局部语义必然指向"这里没给具体数字"的
+    标记词（"必要时""视情况""酌情""遵医嘱"），排除"如果""若""根据""以上"
+    "以下"这类不蕴含"缺具体数字"的通用连接词——这些词在源文本里大量出现，
+    如果不收窄会像 ticket 12 code review 那次一样合成出语义不通的样本。"""
+    assert set(NUMERIC_TRIGGER_MARKERS) <= set(ALL_CONDITIONAL_MARKERS)
+    assert NUMERIC_TRIGGER_MARKERS
+    for weak in ("如果", "若", "根据", "以上", "以下"):
+        assert weak not in NUMERIC_TRIGGER_MARKERS
 
 
 def _record(case_id, source, answer):
     return {"case_id": case_id, "input": f"【原文】\n{source}\n\n【回答】\n{answer}\n\n【要点】\n0. x"}
 
 
-# ---------- find_category_trigger ----------
-
-def test_finds_category_marker_context_window():
-    ctx = find_category_trigger("本品与抗血小板类药物合用时需注意出血风险。")
-    assert ctx is not None and "抗血小板" in ctx
-
-
-def test_returns_none_when_no_category_marker_present():
-    assert find_category_trigger("阿司匹林每日一片，饭后服用。") is None
-
-
-# ---------- pick_examples ----------
+# ---------- pick_examples：变长注入 ----------
 
 def test_pick_examples_matches_known_category_keyword():
-    a, b = pick_examples("本品与抗血小板类药物合用")
-    assert (a, b) == ("阿司匹林", "氯吡格雷")
+    examples = pick_examples("本品与抗血小板类药物合用")
+    assert "阿司匹林" in examples and "氯吡格雷" in examples
 
 
 def test_pick_examples_falls_back_to_default_for_unknown_category():
-    a, b = pick_examples("某种从未见过的怪异类药物")
-    assert a and b  # 兜底也必须给出两个非空示例
+    examples = pick_examples("某种从未见过的怪异类药物")
+    assert len(examples) >= 2  # 兜底也必须给出至少两个非空示例
+
+
+def test_pick_examples_returns_at_least_two_and_at_most_four():
+    """(a) 单案例注入 3-4 个类别成员——L4 决断：方向安全但要有上限，
+    列表过长的枚举句读起来不自然，反而更像"合成伪影"。"""
+    for keyword in CATEGORY_EXAMPLES:
+        examples = pick_examples(f"这属于{keyword}类药物范畴")
+        assert 2 <= len(examples) <= 4, f"「{keyword}」注入数量越界: {len(examples)}"
 
 
 @pytest.mark.parametrize("context,keyword", [
@@ -79,70 +100,201 @@ def test_pick_examples_falls_back_to_default_for_unknown_category():
     ("不宜和感冒类药同服。", "感冒"),
 ])
 def test_pick_examples_covers_train_split_derived_category_roots(context, keyword):
-    """这些关键词/配对全部来自 train 切分兜底案例的频率统计（ticket 12 P3
-    77.1% 落在兜底对的诊断），不是随手加的——扩充目的是让合成命中的类别
-    覆盖面接近真实分布，减少"注入示例单一"这条已知伪影风险。"""
-    a, b = pick_examples(context)
-    assert (a, b) != DEFAULT_EXAMPLES, f"「{keyword}」仍然落在兜底对，词典没覆盖到"
+    """这些关键词全部来自 train 切分兜底案例的频率统计（ticket 12 P3
+    76.5% 落在兜底对的诊断），不是随手加的。"""
+    examples = pick_examples(context)
+    assert examples != DEFAULT_EXAMPLES, f"「{keyword}」仍然落在兜底对，词典没覆盖到"
 
 
 def test_new_category_examples_never_pick_the_keyword_itself_as_the_example():
-    """防止"XX类药"这种源文里的类别名本身恰好是具体药名（如"苯巴比妥类药"，
-    苯巴比妥本身既是类名又是具体药）时，示例词选出了跟类别关键词一样的名字——
-    那样注入了等于没注入，候选词会在 `synthesize_minimal_edit` 的
-    "已在原文出现"防护里被直接跳过，浪费一次合成机会。"""
-    for keyword, (a, b) in CATEGORY_EXAMPLES.items():
-        assert keyword not in (a, b), f"「{keyword}」的示例里出现了关键词本身：{(a, b)}"
+    for keyword, examples in CATEGORY_EXAMPLES.items():
+        assert keyword not in examples, f"「{keyword}」的示例里出现了关键词本身：{examples}"
 
 
-# ---------- synthesize_minimal_edit ----------
+# ---------- find_category_triggers：多标记点 ----------
 
-def test_returns_none_when_source_has_no_category_trigger():
+def test_finds_single_category_marker():
+    ctxs = find_category_triggers("本品与抗血小板类药物合用时需注意出血风险。")
+    assert len(ctxs) == 1 and "抗血小板" in ctxs[0]
+
+
+def test_returns_empty_list_when_no_category_marker_present():
+    assert find_category_triggers("阿司匹林每日一片，饭后服用。") == []
+
+
+def test_finds_multiple_distinct_category_markers_in_one_source():
+    """(b) 同一案例若有多处不同类别标记，每处各出一条——不能只用
+    `.find()` 找到的第一处。"""
+    src = "本品与抗血小板类药物合用需注意，也不宜与磺胺类药同服。"
+    ctxs = find_category_triggers(src)
+    assert len(ctxs) == 2
+    assert any("抗血小板" in c for c in ctxs)
+    assert any("磺胺" in c for c in ctxs)
+
+
+def test_does_not_duplicate_when_same_category_mentioned_twice():
+    """同一类别提两次不算"多处不同类别"，只应该出一条——否则会产出内容
+    几乎相同的合成样本，凑数不凑信息量。"""
+    src = "本品与抗血小板类药物合用需注意，另外抗血小板类药还会加重出血风险。"
+    ctxs = find_category_triggers(src)
+    assert len(ctxs) == 1
+
+
+# ---------- synthesize_entity_edits：一案例可出多条 ----------
+
+def test_returns_empty_list_when_source_has_no_category_trigger():
     r = _record("vt-0001", "阿司匹林每日一片。", "您每天吃一片阿司匹林。")
-    assert synthesize_minimal_edit(r) is None
+    assert synthesize_entity_edits(r) == []
 
 
 def test_injects_specific_examples_not_present_in_source():
     r = _record("vt-0002", "本品与抗血小板类药物合用时需注意。", "用药时要小心。")
-    out = synthesize_minimal_edit(r)
-    assert out is not None
-    assert out["case_id"] == "vt-0002-synth"
-    assert out["injected_examples"] == ["阿司匹林", "氯吡格雷"]
-    assert "阿司匹林" in out["synthetic_answer"] and "氯吡格雷" in out["synthetic_answer"]
+    out = synthesize_entity_edits(r)
+    assert len(out) == 1
+    item = out[0]
+    assert item["case_id"] == "vt-0002-synth"
+    assert set(item["injected_examples"]) >= {"阿司匹林", "氯吡格雷"}
+    assert all(e in item["synthetic_answer"] for e in item["injected_examples"])
     # 最小编辑：原答案内容必须原样保留，只是追加，不是重写
-    assert "用药时要小心。" in out["synthetic_answer"]
-    assert out["red_line_idx"] == 0
-    assert out["verdict"] == "fail"
+    assert "用药时要小心。" in item["synthetic_answer"]
+    assert item["red_line_idx"] == 0
+    assert item["verdict"] == "fail"
+    assert item["source_case_id"] == "vt-0002"
+
+
+def test_multiple_distinct_categories_produce_multiple_synthetic_entries():
+    r = _record(
+        "vt-0010",
+        "本品与抗血小板类药物合用需注意，也不宜与磺胺类药同服。",
+        "用药请遵医嘱。",
+    )
+    out = synthesize_entity_edits(r)
+    assert len(out) == 2
+    assert {item["case_id"] for item in out} == {"vt-0010-synth", "vt-0010-synth2"}
+    assert {item["source_case_id"] for item in out} == {"vt-0010"}
 
 
 def test_skips_when_picked_example_accidentally_already_in_source():
     """防止合成出一句"巧合为真"的话——那就不是违规样本了。"""
     r = _record(
         "vt-0003",
-        "本品与抗血小板类药物（如阿司匹林）合用时需注意，也属于抗凝类药物范畴。",
+        "本品与抗血小板类药物（如阿司匹林、氯吡格雷、替格瑞洛）合用时需注意。",
         "请遵医嘱。",
     )
-    out = synthesize_minimal_edit(r)
-    # 抗血小板类的示例(阿司匹林)已在原文出现，必须整条跳过而不是硬造假阳性
-    assert out is None or "阿司匹林" not in (out.get("injected_examples") or [])
+    out = synthesize_entity_edits(r)
+    assert out == [] or all(
+        e not in ("阿司匹林", "氯吡格雷") for item in out for e in item["injected_examples"]
+    )
 
 
-def test_synthesis_is_deterministic_across_runs():
-    """不能用带盐的内置 hash()——同一 case_id 每次跑出的模板/示例必须一致，
-    否则合成产物无法审计复现。"""
+def test_entity_edits_are_deterministic_across_runs():
     r = _record("vt-0004", "本品属于降压类药物。", "按时吃药就好。")
-    out1 = synthesize_minimal_edit(r)
-    out2 = synthesize_minimal_edit(r)
-    assert out1 == out2
+    assert synthesize_entity_edits(r) == synthesize_entity_edits(r)
 
 
-# ---------- synthesize_all ----------
+# ---------- 数字类最小编辑（红线2，L4 新增） ----------
+
+def test_finds_numeric_trigger():
+    ctx = find_numeric_trigger("是否需要调整剂量，必要时请咨询医生。")
+    assert ctx is not None and "必要时" in ctx
+
+
+def test_returns_none_when_no_numeric_trigger_present():
+    assert find_numeric_trigger("阿司匹林每日一片，饭后服用。") is None
+
+
+def test_synthesize_numeric_edit_injects_a_fabricated_number_not_in_source():
+    r = _record("vt-0020", "是否需要复查，视情况由医生决定。", "按时吃药，注意休息。")
+    out = synthesize_numeric_edit(r)
+    assert out is not None
+    assert out["red_line_idx"] == 2
+    assert out["verdict"] == "fail"
+    assert out["case_id"] == "vt-0020-synthnum"
+    assert "按时吃药，注意休息。" in out["synthetic_answer"]
+    injected = out["injected_examples"][0]
+    assert injected in out["synthetic_answer"]
+
+
+def test_synthesize_numeric_edit_returns_none_without_trigger():
+    r = _record("vt-0021", "阿司匹林每日一片。", "您每天吃一片。")
+    assert synthesize_numeric_edit(r) is None
+
+
+def test_numeric_edit_is_deterministic_across_runs():
+    r = _record("vt-0022", "复查频率酌情而定。", "谢谢医生。")
+    assert synthesize_numeric_edit(r) == synthesize_numeric_edit(r)
+
+
+# ---------- synthesize_all：合并 + 源文档集中度上限 ----------
 
 def test_synthesize_all_skips_records_without_trigger_and_keeps_the_rest():
+    """池子要够大让集中度上限的 cap ≥1（cap=int(总数*5%)）——否则单条正例
+    自己就会被上限裁到 0，混淆"没触发被跳过"和"触发了但被集中度上限裁掉"
+    这两件不同的事。"""
     records = [
         _record("a", "阿司匹林每日一片。", "按时吃。"),
         _record("b", "本品属于降糖类药物。", "按时吃就好。"),
     ]
+    records += [_record(f"pad{i}", "本品属于降压类药物。", "请遵医嘱。") for i in range(25)]
     out = synthesize_all(records)
-    assert len(out) == 1
-    assert out[0]["case_id"] == "b-synth"
+    ids = {item["case_id"] for item in out}
+    assert "b-synth" in ids
+    assert not any(item["source_case_id"] == "a" for item in out)
+
+
+def test_synthesize_all_combines_entity_and_numeric_red_lines():
+    """总池要足够大——单条记录时源文档集中度上限会把同一案例的实体+数字
+    两条边压到只剩一条，这是集中度上限该有的行为（防止小样本下单一来源
+    主导），不是本测试要覆盖的东西，所以垫够背景记录避免触发那条上限。"""
+    records = [_record("c", "本品属于降糖类药物，复查频率必要时而定。", "请遵医嘱。")]
+    # 需要总池够大让 cap（int(总数*5%)）≥2，否则"c"自己的实体+数字两条会被
+    # 集中度上限压掉一条——那是上限该有的行为，不是本测试要覆盖的东西。
+    records += [_record(f"pad{i}", "本品属于降压类药物。", "请遵医嘱。") for i in range(50)]
+    out = synthesize_all(records)
+    red_lines = {item["red_line_idx"] for item in out}
+    assert red_lines == {0, 2}
+
+
+def test_source_concentration_cap_limits_any_single_case_share():
+    """L4 判读规则：任一 source_case_id 贡献的合成正例数不得超过合成正例
+    总数的 `MAX_SOURCE_SHARE`——防止"来源身份"变成可学捷径
+    （arXiv:2606.01304）。这里构造一个人为的极端场景验证上限真的生效。"""
+    heavy = _record(
+        "heavy",
+        "本品与抗血小板类药物合用需注意，也不宜与磺胺类药同服，"
+        "复查频率必要时而定。",
+        "请遵医嘱。",
+    )
+    others = [
+        _record(f"o{i}", "本品属于降压类药物。", "请遵医嘱。") for i in range(30)
+    ]
+    out = synthesize_all([heavy] + others)
+    counts = Counter(item["source_case_id"] for item in out)
+    max_share = max(counts.values()) / len(out)
+    assert max_share <= MAX_SOURCE_SHARE + 1e-9
+
+
+def test_cap_source_concentration_holds_on_small_pools_after_truncation_shrinks_total():
+    """回归（code review 发现）：单次裁剪按裁剪前总数算 cap 不够——3 条 + 5×1条
+    的小样本按裁剪前 8 算出 cap=1，裁完剩 6 条，主导来源份额变成
+    1/6=16.7%，远超 5% 门槛却没有任何信号。这里直接测 `_cap_source_
+    concentration` 本身（不经过 synthesize_all 的文本触发逻辑），逼近
+    复现原始报告的确切场景：裁剪后份额必须严格不超过门槛，不能因为
+    裁剪本身缩小了分母就"事后超线"。"""
+    items = (
+        [{"case_id": f"heavy-{i}", "source_case_id": "heavy"} for i in range(3)]
+        + [{"case_id": f"o{i}-0", "source_case_id": f"o{i}"} for i in range(5)]
+    )
+    out = _cap_source_concentration(items, MAX_SOURCE_SHARE)
+    if out:
+        counts = Counter(it["source_case_id"] for it in out)
+        max_share = max(counts.values()) / len(out)
+        assert max_share <= MAX_SOURCE_SHARE + 1e-9
+
+
+def test_cap_source_concentration_is_a_noop_on_realistic_scale_pools():
+    """生产规模（千级）下每案例最多产出 3-5 条，cap 通常 ≥50，这条上限
+    基本不生效——确认迭代版本没有在正常规模下引入意外裁剪。"""
+    items = [{"case_id": f"c{i}-0", "source_case_id": f"c{i}"} for i in range(1200)]
+    out = _cap_source_concentration(items, MAX_SOURCE_SHARE)
+    assert len(out) == len(items)
