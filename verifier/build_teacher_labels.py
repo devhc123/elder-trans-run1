@@ -328,6 +328,12 @@ def main() -> int:
             print(f"[拒绝] {out} 不存在，扩量前必须先有一份 --sample 建的底包。", file=sys.stderr)
             return 1
         existing = json.loads(out.read_text(encoding="utf-8"))
+        if not existing:
+            # `out.exists()` 只保证文件在，不保证非空——`max()` 在空序列上会
+            # 报一个和真正问题（底包是空的，不是"扩量"该走的路）无关的 ValueError。
+            print(f"[拒绝] {out} 存在但是空的，这不是扩量场景，先用 --sample 建一份真正的底包。",
+                  file=sys.stderr)
+            return 1
         exclude = {c["record_id"] for c in existing}
         start = max(int(c["case_id"].split("-")[1]) for c in existing) + 1
 
