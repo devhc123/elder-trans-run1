@@ -16,7 +16,14 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from metrics.run_eval import BATCH, SYSTEM_PROMPT, build_user_prompt, load_cases, mock_output  # noqa: E402
+from metrics.run_eval import (  # noqa: E402
+    BATCH,
+    SYSTEM_PROMPT,
+    build_user_prompt,
+    load_cases,
+    mock_output,
+    write_kpi1_actual,
+)
 from metrics.wilson import wilson  # noqa: E402
 
 RUNS = ROOT / "runs"
@@ -161,3 +168,130 @@ def test_violated_indices_are_consistent(judged):
 def test_no_duplicate_judgements(judged):
     ids = [j["id"] for j in judged]
     assert len(ids) == len(set(ids))
+
+
+# ---------- write_kpi1_actual：把 kpi1_readability 的 actual/ci95/子集达标率
+# 从"没脚本真正写过"的历史缺口里补上（ticket 08 的验收清单曾把这件事跟
+# 扁平区块的填充误当成一件事打了勾，实际 metrics[0] 这段一直没被动过）。
+
+_KPI1_FIXTURE = """\
+metrics:
+
+  - id: kpi1_readability
+    name: 适老化转译可读性达标率
+    definition: >
+      转译后文本中符合小学六年级可读水平的词汇比例（词级微平均）。
+    primary_gauge: strict
+    target: 0.90
+    also_report: [glossed, lenient]
+    determinism: 确定性计算（metrics/readability.py），无 LLM 调用
+    actual: null
+    actual_hard_subset: null
+    source_baseline_median: 0.864
+    source_already_passing: 83
+    actual_net_gain: 0.0903          # 转译后 − 原文，共同主诊断（口径唯一，无歧义）
+    actual_on_headroom_subset: null  # 原文未达标的 187 题上的达标率——达标率本身还没算过
+    actual_macro_by_scenario: null   # 12 场景表，还没写成结构化数据（目前只印到 stdout）
+    ci95: null
+    verdict: 达标  # 0.9518（均值）与 0.9741（达标率）两种读法都 ≥ target 0.90
+    command: python3 metrics/run_eval.py --live
+
+  - id: kpi2_scenario_coverage
+    target: 10
+    actual: null
+    command: python3 pipeline/validate_testset.py
+
+  - id: guard_faithfulness
+    actual: null
+    ci95: null
+"""
+
+
+def _fake_rows(n_pass=9, n_fail=1, headroom_pass=3, headroom_fail=1, hard_pass=2, hard_fail=1):
+    rows = []
+    for i in range(n_pass):
+        rows.append({"strict": 0.95, "difficulty": "易", "has_headroom": False})
+    for i in range(n_fail):
+        rows.append({"strict": 0.50, "difficulty": "易", "has_headroom": False})
+    for i in range(headroom_pass):
+        rows.append({"strict": 0.95, "difficulty": "中", "has_headroom": True})
+    for i in range(headroom_fail):
+        rows.append({"strict": 0.50, "difficulty": "中", "has_headroom": True})
+    for i in range(hard_pass):
+        rows.append({"strict": 0.95, "difficulty": "难", "has_headroom": False})
+    for i in range(hard_fail):
+        rows.append({"strict": 0.50, "difficulty": "难", "has_headroom": False})
+    return rows
+
+
+def test_kpi1_actual_is_the_pass_rate_not_the_mean(tmp_path):
+    """actual 必须是达标率（KPI 名字本身是"达标率"，且 ci95 只对比例有意义），
+    不是均值——这是本函数存在的全部意义，写错了等于白写。"""
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+    rows = _fake_rows()  # 17 条（9+1+3+1+2+1），14 条 strict>=0.90 => 14/17≈0.8235
+
+    write_kpi1_actual(rows, kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    k1 = next(m for m in data["metrics"] if m["id"] == "kpi1_readability")
+    assert k1["actual"] == round(14 / 17, 4)
+    assert k1["verdict"] == "未达标"  # 0.82 < target 0.90
+
+
+def test_kpi1_subset_fields_are_pass_rates(tmp_path):
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+    rows = _fake_rows()
+
+    write_kpi1_actual(rows, kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    k1 = next(m for m in data["metrics"] if m["id"] == "kpi1_readability")
+    assert k1["actual_hard_subset"] == round(2 / 3, 4)
+    assert k1["actual_on_headroom_subset"] == round(3 / 4, 4)
+
+
+def test_kpi1_ci95_is_written_as_a_pair(tmp_path):
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_kpi1_actual(_fake_rows(), kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    ci = next(m for m in data["metrics"] if m["id"] == "kpi1_readability")["ci95"]
+    assert isinstance(ci, list) and len(ci) == 2
+    assert 0.0 <= ci[0] <= ci[1] <= 1.0
+
+
+def test_kpi1_write_does_not_disturb_kpi2_or_guard_faithfulness(tmp_path):
+    """kpi2 和 guard_faithfulness 也各有 `actual: null`/`ci95: null`——
+    朴素的全局替换会把它们一起改掉，必须只改 kpi1 那一段。"""
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_kpi1_actual(_fake_rows(), kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    kpi2 = next(m for m in data["metrics"] if m["id"] == "kpi2_scenario_coverage")
+    gf = next(m for m in data["metrics"] if m["id"] == "guard_faithfulness")
+    assert kpi2["actual"] is None
+    assert gf["actual"] is None
+    assert gf["ci95"] is None
+
+
+def test_kpi1_actual_net_gain_is_untouched():
+    """已经填过的、无歧义的字段不该被这次写入覆盖成别的值——回归防线，
+    防止以后有人改这个函数时手滑把已确定的口径也重新计算一遍。"""
+    import inspect
+
+    src = inspect.getsource(write_kpi1_actual)
+    assert "actual_net_gain" not in src, "write_kpi1_actual 不该碰 actual_net_gain"

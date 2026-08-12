@@ -343,13 +343,18 @@ def aggregate(run_id: str, cases: list[dict], write_kpi: bool) -> int:
     return 0
 
 
+def _pass_rate(rs: list[dict], gauge: str = "strict", target: float = 0.90) -> tuple[int, int, float]:
+    ok = sum(1 for r in rs if r[gauge] >= target)
+    return ok, len(rs), (round(ok / len(rs), 4) if rs else 0.0)
+
+
 def _write_kpi(run_id: str, rows: list[dict], jrows: list[dict]) -> None:
     def mean(xs):
         xs = [x for x in xs if x is not None]
         return round(sum(xs) / len(xs), 4) if xs else None
 
-    ok = sum(1 for r in rows if r["strict"] >= 0.90)
-    lo, hi = wilson(ok, len(rows))
+    ok, n, pass_rate = _pass_rate(rows)
+    lo, hi = wilson(ok, n)
     head = [r for r in rows if r["has_headroom"]]
     hard = [r for r in rows if r["difficulty"] == "难"]
     okf = sum(1 for r in jrows if r["faithful"] and not r["violated"]) if jrows else None
@@ -359,7 +364,7 @@ def _write_kpi(run_id: str, rows: list[dict], jrows: list[dict]) -> None:
     text = text.split(marker)[0].rstrip() + "\n" + marker
     text += f"last_run_id: {run_id}\n"
     text += f"kpi1_strict_mean: {mean(r['strict'] for r in rows)}\n"
-    text += f"kpi1_strict_pass_rate: {round(ok/len(rows),4)}\n"
+    text += f"kpi1_strict_pass_rate: {pass_rate}\n"
     text += f"kpi1_ci95: [{round(lo,4)}, {round(hi,4)}]\n"
     text += f"kpi1_net_gain: {mean(r['net_gain'] for r in rows)}\n"
     text += f"kpi1_on_headroom_subset: {mean(r['strict'] for r in head)}\n"
@@ -367,6 +372,56 @@ def _write_kpi(run_id: str, rows: list[dict], jrows: list[dict]) -> None:
     text += f"guard_faithfulness: {round(okf/len(jrows),4) if jrows else 'null'}\n"
     text += f"judge_note: Claude Sonnet 5 session subagent；可审计不可复现，留痕见 runs/{run_id}/\n"
     KPI.write_text(text, encoding="utf-8")
+    write_kpi1_actual(rows, kpi_path=KPI)
+
+
+def write_kpi1_actual(rows: list[dict], kpi_path: Path = KPI) -> None:
+    """回填 kpi1_readability 的 `actual`/`ci95`/两个子集达标率——这四个字段
+    历史上一直是 null，`_write_kpi` 只写了同名信息的**均值**到文件末尾的
+    扁平区块，从没写进 `metrics[0]` 这个 schema 真正指向的地方（ticket 08
+    的验收清单曾把这两件事误当成一件事打了勾）。
+
+    `actual` 用达标率而不是均值：KPI 名字本身是"达标率"，`ci95`（Wilson
+    区间）只对比例统计量有意义、配不上均值，且 ticket 08 全程报告的
+    "KPI-1 数字"从来都是达标率（97.4%），不是均值（95.18%）——三个独立
+    信号指向同一个读法，不是随手选的。
+
+    只在 `id: kpi1_readability` 这一段文本范围内做替换，不做整份 YAML
+    反序列化重写（会吃掉注释），也不做全局字符串替换（`actual: null` /
+    `ci95: null` 在 guard_faithfulness 那段也出现，全局替换会误伤）。
+    """
+    ok, n, pass_rate = _pass_rate(rows)
+    lo, hi = wilson(ok, n)
+    head = [r for r in rows if r["has_headroom"]]
+    hard = [r for r in rows if r["difficulty"] == "难"]
+    _, _, head_rate = _pass_rate(head) if head else (0, 0, None)
+    _, _, hard_rate = _pass_rate(hard) if hard else (0, 0, None)
+    verdict = "达标" if pass_rate >= 0.90 else "未达标"
+
+    text = kpi_path.read_text(encoding="utf-8")
+    start = text.find("  - id: kpi1_readability")
+    if start == -1:
+        return
+    end = text.find("\n  - id: kpi2_scenario_coverage", start)
+    if end == -1:
+        return
+    block = text[start:end]
+
+    block = block.replace("    actual: null\n    actual_hard_subset: null\n",
+                           f"    actual: {pass_rate}\n"
+                           f"    actual_hard_subset: {hard_rate}\n")
+    block = block.replace(
+        "    actual_on_headroom_subset: null  # 原文未达标的 187 题上的达标率——达标率本身还没算过\n",
+        f"    actual_on_headroom_subset: {head_rate}  # 原文未达标子集上的达标率\n",
+    )
+    block = block.replace(
+        "    ci95: null\n    verdict: 达标  # 0.9518（均值）与 0.9741（达标率）两种读法都 ≥ target 0.90\n",
+        f"    ci95: [{round(lo,4)}, {round(hi,4)}]\n"
+        f"    verdict: {verdict}\n",
+    )
+
+    text = text[:start] + block + text[end:]
+    kpi_path.write_text(text, encoding="utf-8")
 
 
 def main() -> int:
