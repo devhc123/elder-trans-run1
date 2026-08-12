@@ -107,7 +107,13 @@ def extract_candidates(source_text: str, answer: str, jargon: set[str]) -> list[
         seen.add(text)
         out.append({"text": text, "kind": kind, "red_line_guess": red_line_guess})
 
-    for w in jargon:
+    for w in sorted(jargon):
+        # sorted()：jargon 是 set，原样迭代顺序受进程哈希随机化影响——
+        # 两次跑 build_trusted_candidate_pool() 会产出不同顺序的
+        # candidate_train.jsonl（内容集合相同，行序不同），违反项目自己的
+        # 确定性纪律（第二轮独立审计 Fable 5 发现）。sorted() 让候选发现
+        # 顺序也确定，不只是最终集合确定。
+        #
         # 词表词也要 normalize 再比较——nsrc/nans 都做过 NFKC+去空白，
         # 词表词若原样保留全角字符/空格（如"维生素 C"）就匹配不上规范化后
         # 的原文/回答，导致已在原文的实体被误判成"新增候选"（独立第二意见

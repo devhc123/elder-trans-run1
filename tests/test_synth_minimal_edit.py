@@ -278,8 +278,12 @@ def test_synthesize_numeric_edit_injects_a_fabricated_number_not_in_source():
     assert out["verdict"] == "fail"
     assert out["case_id"] == "vt-0020-synthnum"
     assert "按时吃药，注意休息。" in out["synthetic_answer"]
-    injected = out["injected_examples"][0]
-    assert injected in out["synthetic_answer"]
+    # 候选文本必须是段A真实能抽出的数字/数词 span（1-6字），不是整句编造
+    # 短语（原整句9-13字）——第二轮独立审计(Fable 5)发现的候选形状不匹配。
+    assert out["injected_examples"]
+    for span in out["injected_examples"]:
+        assert span in out["synthetic_answer"]
+        assert len(span) <= 6
 
 
 def test_synthesize_numeric_edit_returns_none_without_trigger():
@@ -293,13 +297,17 @@ def test_numeric_edit_is_deterministic_across_runs():
 
 
 def test_synthesize_numeric_edit_holdout_flag_uses_disjoint_pool():
+    """train/holdout 用的是不重叠的**短语**池（NUMERIC_INJECTIONS 按索引
+    切分），所以拼出的整句必须不同。候选文本现在是从短语里抽出的数字/
+    数词 span（见 A3 修复），不强求 span 本身跨池不重叠——单个数字/数词
+    是极低信息量的通用 token（"2""一次"这类），不像药名那样构成"记住
+    这个具体事实"的捷径，段A本来就设计成对它们宁可错杀，这里不必也不该
+    再叠一层跨池隔离，那是给药名这种高信息量实体准备的纪律。"""
     r = _record("vt-0020", "是否需要复查，视情况由医生决定。", "按时吃药，注意休息。")
     train_out = synthesize_numeric_edit(r, holdout=False)
     holdout_out = synthesize_numeric_edit(r, holdout=True)
     assert train_out is not None and holdout_out is not None
-    assert train_out["injected_examples"][0] != holdout_out["injected_examples"][0]
-    assert train_out["injected_examples"][0] in NUMERIC_INJECTIONS[:-_NUMERIC_HOLDOUT_RESERVED]
-    assert holdout_out["injected_examples"][0] in NUMERIC_INJECTIONS[-_NUMERIC_HOLDOUT_RESERVED:]
+    assert train_out["synthetic_answer"] != holdout_out["synthetic_answer"]
 
 
 # ---------- synthesize_all：合并 + 源文档集中度上限 ----------
@@ -321,10 +329,17 @@ def test_synthesize_all_skips_records_without_trigger_and_keeps_the_rest():
 
 def test_synthesize_all_holdout_vocabulary_never_overlaps_train_vocabulary():
     """端到端回归（独立第二意见代码审计发现）：train 合成正例与 holdout
-    对抗子集必须没有共同的注入词——哪怕两边用**同一份**触发内容（同一个
+    对抗子集必须没有共同的**实体**注入词（红线0：药名这类高信息量、可能被
+    当"记住这个具体事实"捷径的词）——哪怕两边用**同一份**触发内容（同一个
     案例既当 train 输入又当 holdout 输入喂进去，模拟"两个 split 里各有
-    一条提到同一类别/触发词的案例"这个真实场景），产出的注入词表也不能
-    重叠，否则对抗子集测的是记忆力不是泛化。"""
+    一条提到同一类别/触发词的案例"这个真实场景），产出的实体词表也不能
+    重叠，否则对抗子集测的是记忆力不是泛化。
+
+    红线2（数字/数词 span）不做这条限制——数字是极低信息量的通用 token
+    （"2""一次"这类），train/holdout 两个不重叠的编造短语池仍然会在具体
+    数字上偶然撞车（比如两个不同短语都用到了"2"），这不构成"记住同一个
+    具体事实"，不该也不必强求数字级别互不相交（`test_synthesize_numeric_
+    edit_holdout_flag_uses_disjoint_pool` 有专门说明）。"""
     records = [
         _record("shared", "本品与抗血小板类药物合用需注意，复查频率必要时而定。", "请遵医嘱。"),
     ]
@@ -334,11 +349,11 @@ def test_synthesize_all_holdout_vocabulary_never_overlaps_train_vocabulary():
     train_synth = synthesize_all(records, holdout=False)
     holdout_synth = synthesize_all(records, holdout=True)
 
-    train_words = {w for s in train_synth for w in s["injected_examples"]}
-    holdout_words = {w for s in holdout_synth for w in s["injected_examples"]}
+    train_words = {w for s in train_synth if s["red_line_idx"] == 0 for w in s["injected_examples"]}
+    holdout_words = {w for s in holdout_synth if s["red_line_idx"] == 0 for w in s["injected_examples"]}
     assert train_words and holdout_words
     assert not (train_words & holdout_words), (
-        f"train/holdout 注入词汇有重叠: {train_words & holdout_words}"
+        f"train/holdout 实体注入词汇有重叠: {train_words & holdout_words}"
     )
 
 

@@ -275,10 +275,17 @@ def synthesize_entity_edits(record: dict, *, holdout: bool = False) -> list[dict
         return []
 
     nsrc = normalize(source_text)
+    nans_original = normalize(answer)
     out: list[dict] = []
     for i, context in enumerate(contexts):
         examples = pick_examples(context, holdout=holdout)
-        if any(normalize(e) in nsrc for e in examples):
+        # 也要跳过"已在原答案里出现"的示例，不只是"已在原文里出现"——
+        # 第二轮独立审计（Fable 5）发现：如果这个词已经合法出现在真实答案
+        # 里（比如就是这条病例本来问的那个药，触发了红线0的身份例外条款，
+        # 案例本身判 pass），再把它当"编造注入"标成 True，会在训练集里
+        # 造出同一个 (case, 词) 组合一边标 False 一边标 True 的直接矛盾
+        # ——实测train切分里有11条这样的矛盾。
+        if any(normalize(e) in nsrc or normalize(e) in nans_original for e in examples):
             continue
         seed_key = f"{record['case_id']}:{i}"
         injected = _template_for(seed_key).format(names="、".join(examples))
@@ -310,18 +317,30 @@ def synthesize_numeric_edit(record: dict, *, holdout: bool = False) -> dict | No
         return None
 
     nsrc = normalize(source_text)
+    nans_original = normalize(answer)
     injection = _pick_numeric_injection(f"numeric:{record['case_id']}", nsrc, holdout=holdout)
     if injection is None:
         return None
+    # 同 synthesize_entity_edits：也要防止编造短语里的数字恰好已经合法
+    # 出现在原答案里，避免同一 (case, 数字) 组合一边标 False 一边标 True。
+    inj_nums = list(dict.fromkeys(DIGIT_RE.findall(injection) + CN_NUMERAL_RE.findall(injection)))
+    if not inj_nums or any(normalize(n) in nans_original for n in inj_nums):
+        return None
 
     synthetic_answer = answer.rstrip() + f"\n\n（补充一句：{injection}。）"
+    # **候选文本用抽出的数字/数词 span，不用整句编造短语**——第二轮独立
+    # 审计（Fable 5）发现：整句当 candidate_text（9-13 字）与生产环境段A
+    # 实际能抽出的候选形状（1-5 字的 digit/cn_numeral span）不匹配，训练
+    # 正例的候选文本在生产环境里永远不会出现，红线2的验收数字测的是一个
+    # 段A根本不会喂给它的分布。`inj_nums` 已经是用同一套正则从注入短语里
+    # 提取的 span，形状与真实候选一致。
     return {
         "case_id": f"{record['case_id']}-synthnum",
         "source_case_id": record["case_id"],
         "source_text": source_text,
         "original_answer": answer,
         "synthetic_answer": synthetic_answer,
-        "injected_examples": [injection],
+        "injected_examples": inj_nums,
         "category_context": context,
         "red_line_idx": 2,
         "verdict": "fail",
@@ -430,12 +449,13 @@ def main() -> int:
     synth = synthesize_all(records)
     n_rl0_records = sum(1 for s in synth if s["red_line_idx"] == 0)
     n_rl2_records = sum(1 for s in synth if s["red_line_idx"] == 2)
-    # **候选级正例 ≠ 合成记录数**——一条红线0记录可能注入 2-4 个词，每个词
-    # 都是段B训练要用的一个独立候选级正例；红线2每条记录只注入 1 个。
-    # code review 发现过一次"记录数"和"候选级正例数"在文档里被混用导致
-    # 数字对不上，这里两个数都直接打印，不需要另写脚本换算。
+    # **候选级正例 ≠ 合成记录数**——一条红线0记录可能注入 2-4 个词，一条
+    # 红线2记录也可能展开成多个数字/数词 span（A3 修复后 candidate_text
+    # 改用从编造短语里抽出的真实 span，不再是整句，一条短语常含 1-4 个
+    # span——之前这里假设"红线2每条记录固定1个候选"，A3 改完就不成立了，
+    # 第三轮独立审计的教训：改了数据形状要连报表口径一起改，不能留旧假设。
     n_rl0_candidates = sum(len(s["injected_examples"]) for s in synth if s["red_line_idx"] == 0)
-    n_rl2_candidates = n_rl2_records  # 每条记录固定 1 个候选
+    n_rl2_candidates = sum(len(s["injected_examples"]) for s in synth if s["red_line_idx"] == 2)
     print(f"train {len(records)} 条 -> 合成记录 {len(synth)} 条"
           f"（红线0/实体 {n_rl0_records} 条记录，红线2/数字 {n_rl2_records} 条记录）")
     print(f"候选级正例（段B训练用的粒度，一条记录可能展开成多个候选）：\n"
