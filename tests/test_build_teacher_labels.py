@@ -15,11 +15,20 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+import verifier.build_teacher_labels as build_teacher_labels  # noqa: E402
+from pipeline.extract_candidates import join_fields as canonical_join_fields  # noqa: E402
 from verifier.build_teacher_labels import (  # noqa: E402
     SAMPLE_MIX,
     assemble,
     sample,
 )
+
+
+def test_collect_reuses_the_canonical_join_fields():
+    """回归：collect() 曾经自己重写了一份不带 FIELD_LABELS 的拼接逻辑，
+    权益匹配的裸「否」缺陷原样重现在了新一轮标注里（ticket 10 发现，69/1955
+    条候选受影响）。这里直接断言两处引用的是同一个函数对象，防止再次分叉。"""
+    assert build_teacher_labels.join_fields is canonical_join_fields
 
 
 # ---------- 重配后的配比（依据：ticket 09 的 440 条实测 fail 率） ----------

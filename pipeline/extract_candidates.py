@@ -63,6 +63,22 @@ FIELD_LABELS = {
 }
 SAMPLE_SEED = 20260810
 
+
+def join_fields(fields: list[str], parts: list[str]) -> str:
+    """把同一行的多个字段拼成一段原文，多字段时按 FIELD_LABELS 加标签。
+
+    **verifier/build_teacher_labels.py 必须复用这个函数，不能自己重写一份。**
+    它曾经这么做过，结果 FIELD_LABELS 这个修复没跟着传过去——verifier 训练池里
+    的权益匹配候选又变回了裸 DB 行，同一个「否」不知道指什么的缺陷原样重现在
+    了 ticket 09/10 的教师标注里（发现时全池 1955 条候选中有 69 条受影响）。
+    """
+    if len(fields) > 1:
+        return "\n".join(
+            f"{FIELD_LABELS[f]}：{v}" if f in FIELD_LABELS else v
+            for f, v in zip(fields, parts)
+        )
+    return "\n".join(parts)
+
 # 场景 -> [(库, 逻辑表, [必需字段...])]。字段名逐一对照 index 的 files.columns。
 SCENARIO_SOURCES: dict[str, list[tuple[str, str, list[str]]]] = {
     "检验报告解读": [
@@ -124,15 +140,22 @@ SCENARIO_SOURCES: dict[str, list[tuple[str, str, list[str]]]] = {
         ("bdyd", "检查", ["检查须知"]),
     ],
     # ⚠️ 医保侧只有布尔位与粗估费用，无政策条款原文，是 12 类里源数据最薄的。
-    # 单取 yibao_status+cost_money 只有 40 余字，作为待转译原文不成立，
-    # 故并入治疗方式、疗程、常用药等字段，凑成一段有实质内容的「就医花费与
-    # 保障」说明。这仍不是医保政策条款，thin_source 标记保留。
+    # 单取 cost_money 只有 40 余字，作为待转译原文不成立，故并入治疗方式、
+    # 疗程、常用药等字段，凑成一段有实质内容的「就医花费与保障」说明。这仍不是
+    # 医保政策条款，thin_source 标记保留。
+    #
+    # ⚠️ **不出「是否医保报销」这一位，人工决定，不只是补标签。** 加
+    # FIELD_LABELS 标签后原文变成明确的「是否医保报销：否」，但 live-002
+    # 实测（runs/live-002/judged/）显示这不是纯粹的 schema 猜谜：14/15 题
+    # 模型本就正确识别这是医保问题，13/15 题却仍主动断言或暗示部分能报——
+    # 更像是「国内医保覆盖面广」的先验压过了一个孤立布尔位，不是没看懂那个
+    # 字段指什么。加标签能不能修好没有实证，与其把一个未验证是否解决的假设
+    # 印进测试集，不如直接不测这一位：只留费用、疗程、治疗方式、检查这些
+    # 有政策条款支持不了、但也没有真假对错歧义的维度。
     "权益匹配": [
-        ("others", "diseaseKg",
-         ["yibao_status", "cost_money", "cure_way", "cure_lasttime", "check"]),
-        ("xywy", "medical",
-         ["medicalInsurance", "treatmentMethods", "treatmentCycle", "cureRate"]),
-        ("ylys", "疾病", ["是否医保：", "治疗", "治疗周期："]),
+        ("others", "diseaseKg", ["cost_money", "cure_way", "cure_lasttime", "check"]),
+        ("xywy", "medical", ["treatmentMethods", "treatmentCycle", "cureRate"]),
+        ("ylys", "疾病", ["治疗", "治疗周期："]),
     ],
     "分科导诊": [
         ("bdyd", "症状", ["就诊科室", "原因"]),
@@ -374,15 +397,7 @@ def extract(db: sqlite3.Connection) -> dict[str, list[dict]]:
                 parts = [clean(row.get(f, "")) for f in fields]
                 if not all(parts):
                     continue
-                # 单字段时不加标签（原文本身是完整段落）；多字段拼接时必须加，
-                # 否则读者无从分辨每段是什么。
-                if len(fields) > 1:
-                    text = "\n".join(
-                        f"{FIELD_LABELS[f]}：{v}" if f in FIELD_LABELS else v
-                        for f, v in zip(fields, parts)
-                    )
-                else:
-                    text = "\n".join(parts)
+                text = join_fields(fields, parts)
                 if not (MIN_LEN <= len(text) <= MAX_LEN):
                     continue
                 name = clean(row.get(name_col, "")) if name_col else ""

@@ -19,16 +19,18 @@ sys.path.insert(0, str(ROOT))
 
 from pipeline.extract_candidates import (  # noqa: E402
     CORPUS,
+    FIELD_LABELS,
     MAX_LEN,
     MIN_LEN,
     NAME_MATCH_NOT_MEANINGFUL,
     SCENARIO_SOURCES,
-    is_excluded_emergency,
-    is_excluded_population,
     SIMULATED_SCENARIOS,
     THIN_SCENARIOS,
     clean,
     is_elder_relevant,
+    is_excluded_emergency,
+    is_excluded_population,
+    join_fields,
     sample,
 )
 
@@ -276,6 +278,48 @@ def test_clean_converts_list_literals():
 
 def test_clean_strips_html():
     assert clean("<p>血压偏高</p>") == "血压偏高"
+
+
+# ---------- join_fields：多字段拼接必须带标签 ----------
+# 回归见 ticket 10——verifier/build_teacher_labels.py 曾经自己重写了一份不带
+# 标签的拼接逻辑，权益匹配的裸「否」缺陷原样重现。两个调用方现在共用这一个
+# 函数，不允许再各写一份。
+
+def test_join_fields_labels_multi_field_rows():
+    text = join_fields(["yibao_status", "cure_way"], ["否", "药物治疗"])
+    assert text == "是否医保报销：否\n治疗方式：药物治疗"
+
+
+def test_join_fields_does_not_label_single_field_rows():
+    """单字段时原文本身就是完整段落，不该被硬套一个标签。"""
+    text = join_fields(["用法用量"], ["口服，一日一次"])
+    assert text == "口服，一日一次"
+
+
+def test_join_fields_never_emits_a_bare_yes_no():
+    """这就是 ticket 08 的那个缺陷本身：裸「否」不知道指什么。"""
+    text = join_fields(["yibao_status"] + list(FIELD_LABELS)[:2],
+                        ["否"] + ["x"] * 2)
+    assert not text.splitlines()[0] == "否"
+
+
+def test_benefit_matching_never_pulls_the_insurance_field():
+    """人工决定（不是补标签就能解决）：live-002 实测显示 13/15 题模型本就
+    正确识别「否」在问医保，却仍主动断言/暗示部分能报——更像国内医保覆盖面广
+    的先验压过一个孤立布尔位，不是没看懂字段。加标签能不能修好没有实证，
+    与其把未验证的假设印进测试集，不如直接不测这一位。见
+    pipeline/extract_candidates.py 里 SCENARIO_SOURCES["权益匹配"] 的注释。"""
+    insurance_fields = {"yibao_status", "medicalInsurance", "是否医保：", "是否医保"}
+    for _lib, _logical, fields in SCENARIO_SOURCES["权益匹配"]:
+        assert not (insurance_fields & set(fields)), fields
+
+
+def test_join_fields_passes_through_unknown_field_names():
+    """字段不在 FIELD_LABELS 表里时不硬造标签，原样透传——不能因为标不出来
+    就报错或丢内容。"""
+    text = join_fields(["some_unmapped_field", "cure_way"], ["原样内容", "药物治疗"])
+    assert "原样内容" in text
+    assert "治疗方式：药物治疗" in text
 
 
 # ---------- 抽样确定性 ----------

@@ -45,6 +45,7 @@ from pipeline.extract_candidates import (  # noqa: E402
     is_elder_relevant,
     is_excluded_emergency,
     is_excluded_population,
+    join_fields,
     load_table,
 )
 
@@ -122,7 +123,7 @@ def collect(db: sqlite3.Connection) -> dict[str, list[dict]]:
                 parts = [clean(row.get(f, "")) for f in fields]
                 if not all(parts):
                     continue
-                text = "\n".join(parts)
+                text = join_fields(fields, parts)
                 if not (MIN_LEN <= len(text) <= MAX_LEN):
                     continue
                 name = clean(row.get(name_col, "")) if name_col else ""
