@@ -50,13 +50,19 @@ SYSTEM = """你是医疗转述的忠实性判别器。只以「原文」为事�
 只输出 JSON，不要解释。evidence 必须是原文或回答里的原样子串。"""
 
 
+# train() 用它告诉 Unsloth 的 train_on_responses_only 从哪里开始算 loss。
+# 必须是 render_prompt 输出的字面尾巴——两处分开写、改一处忘改另一处，
+# loss 遮罩会静默错位，不报错，只会让训练效果诡异地变差。
+RESPONSE_MARKER = "<|assistant|>\n"
+
+
 def render_prompt(system: str, input_: str) -> str:
     """训练用的对话模板。predict_lora.py 的推理 prompt 必须调这同一个函数——
 
     分开写两份字面量模板，改一处忘改另一处时训练/推理会静默错位（模型看到的
     不再是它训练时见过的格式），这类偏差不报错，只会让输出质量莫名下降。
     """
-    return f"<|system|>\n{system}\n<|user|>\n{input_}\n<|assistant|>\n"
+    return f"<|system|>\n{system}\n<|user|>\n{input_}\n{RESPONSE_MARKER}"
 
 
 def build_prompt(c: dict) -> str:
@@ -121,7 +127,29 @@ def make_dataset(items: list[dict], labels: dict[str, dict]) -> list[dict]:
     return out
 
 
-def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int) -> int:
+def oversample_positives(rows: list[dict], factor: int) -> list[dict]:
+    """把 verdict=fail 的行按 factor 重复，其余行原样保留。
+
+    **为什么需要它**：ticket 09 摸底在 6.5% 红线正例比例下朴素 SFT 直接坍缩成
+    常量输出（全判 pass，κ=0.024）；ticket 10 扩量到 1955 条后，训练集的红线
+    正例比例不升反降到约 1.6%（每例 3 个红线槽位、正例总数被 held-out 集
+    拿走大半）。不处理这一步，扩量本身不解决坍缩——这是 ticket 10/11 两张票
+    都写死的结论，不是可选项。
+
+    倍数从 1 开始按 held-out 表现网格搜索（ticket 10 的要求），不能拍一个数；
+    factor=1 时必须是纯粹的 no-op，方便把"不过采样"也当网格里的一个点跑。
+    """
+    if factor < 1:
+        raise ValueError(f"factor 必须 >=1（会删掉正例），拿到 {factor}")
+    out = []
+    for r in rows:
+        is_fail = json.loads(r["output"]).get("verdict") == "fail"
+        out.extend([r] * (factor if is_fail else 1))
+    return out
+
+
+def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int,
+          oversample_fail: int = 1) -> int:
     try:
         from unsloth import FastLanguageModel
     except ImportError:
@@ -131,7 +159,13 @@ def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int) -> 
     from trl import SFTConfig, SFTTrainer
 
     rows = [json.loads(l) for l in data_path.read_text(encoding="utf-8").splitlines() if l.strip()]
-    print(f"训练样本 {len(rows)}")
+    n_fail = sum(1 for r in rows if json.loads(r["output"]).get("verdict") == "fail")
+    print(f"训练样本 {len(rows)}（fail {n_fail}, {n_fail / len(rows):.1%}）")
+    if oversample_fail > 1:
+        rows = oversample_positives(rows, oversample_fail)
+        n_fail_after = sum(1 for r in rows if json.loads(r["output"]).get("verdict") == "fail")
+        print(f"过采样 x{oversample_fail} 后 {len(rows)}（fail {n_fail_after}, "
+              f"{n_fail_after / len(rows):.1%}）")
 
     m, tok = FastLanguageModel.from_pretrained(
         model_name=model,
@@ -175,6 +209,20 @@ def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int) -> 
             max_seq_length=MAX_SEQ,
         ),
     )
+
+    # **只在 assistant 段算 loss。** 不做这一步，prompt 里的原文+回答（p90 2594
+    # 字）会把输出 JSON 里本就稀缺的红线信号（过采样前约 1.6%）进一步稀释——
+    # 这是与过采样并列的第二道防线，两个都不做基本会复现 09 的坍缩。
+    # instruction_part 是整段文本的起点（Base 模型模板没有更早的边界可用），
+    # response_part 必须与 render_prompt 实际吐出的 assistant 段起始逐字节一致。
+    from unsloth.chat_templates import train_on_responses_only
+
+    trainer = train_on_responses_only(
+        trainer,
+        instruction_part="<|system|>\n",
+        response_part=RESPONSE_MARKER,
+    )
+
     trainer.train()
     m.save_pretrained(str(out_dir))
     tok.save_pretrained(str(out_dir))
@@ -192,6 +240,10 @@ def main() -> int:
     ap.add_argument("--bsz", type=int, default=2)
     ap.add_argument("--holdout", type=int, default=0,
                     help="留出多少条做验收（必须在训练前切出并封存）")
+    ap.add_argument("--oversample-fail", type=int, default=1,
+                    help="verdict=fail 的行重复几遍（ticket 11 要求：训练集红线正例"
+                         "约 1.6%%，不处理大概率复现 09 的坍缩。从 1（不采样）开始"
+                         "在 held-out 上网格搜索，不要拍一个数）")
     args = ap.parse_args()
 
     if args.make_data:
@@ -235,7 +287,7 @@ def main() -> int:
         print(f"训练集 {len(ds)} 条 -> {args.data}")
         return 0
 
-    return train(args.data, args.out, args.model, args.epochs, args.bsz)
+    return train(args.data, args.out, args.model, args.epochs, args.bsz, args.oversample_fail)
 
 
 if __name__ == "__main__":

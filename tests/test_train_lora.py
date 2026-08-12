@@ -18,11 +18,13 @@ from verifier.train_lora import (  # noqa: E402
     BASE_MODEL,
     FALLBACK_MODEL,
     MAX_SEQ,
+    RESPONSE_MARKER,
     SCALE_UP_MODEL,
     SYSTEM,
     build_prompt,
     build_target,
     make_dataset,
+    oversample_positives,
     render_prompt,
 )
 
@@ -254,3 +256,48 @@ def test_rare_redlines_are_flagged_as_underpowered():
         assert f"红线 {i}" in doc or f"红线{i}" in doc, (
             f"红线 {i} 正例仅 {counts[i]} 条（<20，不足以学习），但票据里没有记录这一点"
         )
+
+
+# ---------- 正例过采样（ticket 11：训练集 fail 占比 4.5%、红线槽位阳性率约
+# 1.6%，09 摸底在类似量级下坍缩成常量输出——只调超参数不解决，训练脚本本身
+# 必须能把有效正负比例拉开） ----------
+
+def _row(verdict, tag="x"):
+    return {
+        "case_id": tag, "system": "s", "input": "i",
+        "output": json.dumps({"key_points": [], "red_lines": [], "verdict": verdict}),
+    }
+
+
+def test_oversample_positives_factor_one_is_a_no_op():
+    rows = [_row("pass", "a"), _row("fail", "b")]
+    assert oversample_positives(rows, 1) == rows
+
+
+def test_oversample_positives_duplicates_only_fail_rows():
+    rows = [_row("pass", "a"), _row("fail", "b")]
+    out = oversample_positives(rows, 3)
+    assert sum(1 for r in out if r["case_id"] == "a") == 1
+    assert sum(1 for r in out if r["case_id"] == "b") == 3
+
+
+def test_oversample_positives_is_a_noop_with_no_fail_rows():
+    rows = [_row("pass", "a"), _row("pass", "b")]
+    assert oversample_positives(rows, 5) == rows
+
+
+def test_oversample_positives_rejects_factor_below_one():
+    """factor=0 会把正例全部删光，这不是过采样能干的事，必须显式拒绝。"""
+    with pytest.raises(ValueError):
+        oversample_positives([_row("fail", "a")], 0)
+
+
+# ---------- 只在 assistant 段算 loss（否则 prompt 里的原文/回答会把本就
+# 稀缺的红线信号进一步稀释——p90 prompt 2594 字，输出 JSON 只有几十字） ----------
+
+def test_response_marker_matches_render_prompt_tail():
+    """train() 靠这个常量告诉 Unsloth 的 train_on_responses_only 从哪里开始
+    算 loss——必须与 render_prompt 实际吐出的 assistant 段起始逐字节一致，
+    错位不报错，只会让 loss 遮罩偏移、静默训坏。"""
+    p = render_prompt("SYS", "IN")
+    assert p.endswith(RESPONSE_MARKER)
