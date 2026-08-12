@@ -88,19 +88,19 @@ caveats:
       权益匹配的医保侧只有布尔位，无政策条款原文。
 
 # --- frozen by validate_testset.py --freeze ---
-dataset_sha256: ab36798a7d58b7d60f7269e9e82a3b40f686996eaef8b43b5d58563d5312add6
+dataset_sha256: 3532aee8ac1eeea28fc26c71523f2796d341c5fdf7aef7290fd7edd3701ed2cb
 dataset_n_cases: 270
 dataset_n_scenarios: 12
 dataset_n_hard: 38
 dataset_split_seed: 20260810
 
 # --- filled by run_eval.py --aggregate ---
-last_run_id: live-002
-kpi1_strict_mean: 0.9519
+last_run_id: live-003
+kpi1_strict_mean: 0.9518
 kpi1_strict_pass_rate: 0.9741
 kpi1_ci95: [0.9475, 0.9874]
-kpi1_net_gain: 0.0928
-kpi1_on_headroom_subset: 0.9457
-kpi1_hard_subset: 0.9536
-guard_faithfulness: 0.6481
-judge_note: Claude Sonnet 5 session subagent；可审计不可复现，留痕见 runs/live-002/
+kpi1_net_gain: 0.0903
+kpi1_on_headroom_subset: 0.9451
+kpi1_hard_subset: 0.9527
+guard_faithfulness: 0.6889
+judge_note: Claude Sonnet 5 session subagent；可审计不可复现，留痕见 runs/live-003/
