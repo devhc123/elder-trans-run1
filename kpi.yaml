@@ -26,18 +26,35 @@ metrics:
     target: 0.90
     also_report: [glossed, lenient]
     determinism: 确定性计算（metrics/readability.py），无 LLM 调用
-    actual: null              # 词级微平均，待 --live
-    actual_hard_subset: null  # hard 子集（难度=难的 15%）单独报，判别力观测口
+    # ⚠️ 2026-08-13 发现：以下几个字段没有脚本真正写过（一直是 null），
+    # 且其中三个字段本身指代不清，故意不填、不猜：
+    #   - `actual` 的行内注释写"词级微平均"（micro-average，对应
+    #     kpi1_strict_mean=0.9518），但 KPI 名字是"达标率"（对应
+    #     kpi1_strict_pass_rate=0.9741）——两个数不是一回事，注释与名字打架。
+    #   - `ci95` 紧挨着 `actual`，但它是 Wilson 区间，只对"达标率"这类比例
+    #     统计量有意义，不能配"均值"——如果 `actual` 填均值，`ci95` 就文不
+    #     对题；如果 `actual` 填达标率，就与自己的行内注释矛盾。
+    #   - `actual_hard_subset` / `actual_on_headroom_subset` 目前只算出了
+    #     子集的**均值**，从没算过子集的**达标率**——`actual_on_headroom_subset`
+    #     的行内注释明写"达标率"，但没有对应的达标率数字存在任何地方。
+    # 这三类不确定的字段留 null，只填下面两个没有歧义的（`kpi1_net_gain`
+    # 只有一种口径；`verdict` 在均值 0.9518 和达标率 0.9741 两种读法下都是
+    # "达标"，与哪种解释无关）。要真正填上 `actual`/`ci95`/两个子集字段，
+    # 得先决定这四个字段各自该存哪个口径，并在 aggregate() 里把达标率也算出来
+    # （目前 hard/headroom 子集只算了均值）——这是留给下一轮的判断题，不是
+    # 缺个脚本调用那么简单。
+    actual: null
+    actual_hard_subset: null
     # ⚠️ 原文基线：中位 0.864，其中 83/270（31%）原文已 ≥0.90。
     # 这些题「照抄原文」即通过，对 KPI-1 零区分度。跑数必须同时报净提升与
     # 「原文未达标子集」上的达标率，绝对达标率不得单独引用。见 AUTHORING_SPEC §4d。
     source_baseline_median: 0.864
     source_already_passing: 83
-    actual_net_gain: null            # 转译后 − 原文，共同主诊断
-    actual_on_headroom_subset: null  # 原文未达标的 187 题上的达标率
-    actual_macro_by_scenario: null
+    actual_net_gain: 0.0903          # 转译后 − 原文，共同主诊断（口径唯一，无歧义）
+    actual_on_headroom_subset: null  # 原文未达标的 187 题上的达标率——达标率本身还没算过
+    actual_macro_by_scenario: null   # 12 场景表，还没写成结构化数据（目前只印到 stdout）
     ci95: null
-    verdict: null
+    verdict: 达标  # 0.9518（均值）与 0.9741（达标率）两种读法都 ≥ target 0.90
     command: python3 metrics/run_eval.py --live
 
   - id: kpi2_scenario_coverage
