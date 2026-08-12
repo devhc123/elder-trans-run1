@@ -95,7 +95,7 @@ caveats:
       细节与 live-003 的具体反例见 ticket 08 追加二。
 
 # --- frozen by validate_testset.py --freeze ---
-dataset_sha256: 2bbe3ba01fdf07e6ad6da9ab5713ebc08112265560e0cae972b95e2290d5e1a4
+dataset_sha256: 08517254e53be3499125d2010f4d6dfbbf773235f4919defad49cd21063163ff
 dataset_n_cases: 270
 dataset_n_scenarios: 12
 dataset_n_hard: 38
