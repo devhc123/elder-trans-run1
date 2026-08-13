@@ -273,8 +273,10 @@ def build_candidate_training_pool(train_records: list[dict]) -> list[dict]:
     teacher_labeled = load_teacher_candidate_labels(teacher_path) if teacher_path.exists() else []
     synthetic = synthetic_records_to_candidates(synthesize_all(train_records))
     # 两类注入负例按 **kind 分别配平**（ticket 26）：实体负例对齐实体正例、
-    # 数字负例把可用的全用上。用一个总数上限截断会让 kind 分布随机倾斜，
-    # 而 ticket 17 的探针⑦ 正是盯这个的。
+    # 数字负例**按正例的 kind 比例取配额，取不满就少取**（不是"把可用的全用上"
+    # ——那正是 Fable 5 审计里 J=0.722 形状捷径的成因，见 DISCIPLINE.md D1）。
+    # 用一个总数上限截断同样会让 kind 分布随机倾斜，而 ticket 17 的探针⑦
+    # 正是盯这个的。
     from collections import Counter
 
     from verifier.shortcut_probes import infer_kind

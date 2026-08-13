@@ -698,8 +698,10 @@ def build_grounded_injection(record: dict, jargon: set[str], *, max_terms: int =
     # 实体。塞进"像X这类药"的框架里既读不通，更要命的是造出一个新的可学特征
     # ——"括注里不是药名 ⇒ 负例"。措辞跟正例对齐了、内容类别却没对齐，等于把
     # 捷径从用词挪到语义类别，跟上一轮零候选安慰语犯的是同一个错。
-    # 收紧后 train 513 / holdout 140，配 505/110 条等价形式负例，总量仍超过
-    # 合成正例，够用。宁可少造，不要造出下一轮审计要挑的东西。
+    # 收紧后 train 513 / holdout 140（放宽版的 3,149 条里 84% 是非药实体，
+    # 那不是"产量更高"，是把捷径从用词挪到语义类别）。**产量本身不是论据**：
+    # 够不够由调用方的 kind 配额和验收侧的 CI 判定，不由"总量超过合成正例"
+    # 判定——见 DISCIPLINE.md D1。宁可少造，不要造出下一轮审计要挑的东西。
     picked: list[str] = []
     for w in _druglike_terms(jargon):
         if len(picked) >= max_terms:
