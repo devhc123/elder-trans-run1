@@ -42,7 +42,19 @@ metrics:
     source_already_passing: 83
     actual_net_gain: 0.0903          # 转译后 − 原文，共同主诊断（口径唯一，无歧义）
     actual_on_headroom_subset: 0.9615  # 原文未达标子集上的达标率
-    actual_macro_by_scenario: null   # 12 场景表，还没写成结构化数据（目前只印到 stdout）
+    actual_macro_by_scenario:
+      - {scenario: 运动与养生, n: 24, strict_mean: 0.9277, net_gain: 0.1027}
+      - {scenario: 用药干预, n: 20, strict_mean: 0.9429, net_gain: 0.117}
+      - {scenario: 饮食营养, n: 35, strict_mean: 0.9431, net_gain: 0.1214}
+      - {scenario: 检验报告解读, n: 24, strict_mean: 0.9465, net_gain: 0.1184}
+      - {scenario: 分科导诊, n: 18, strict_mean: 0.9472, net_gain: 0.1199}
+      - {scenario: 医嘱转译, n: 15, strict_mean: 0.9545, net_gain: 0.0757}
+      - {scenario: 日常照护, n: 47, strict_mean: 0.9546, net_gain: 0.0531}
+      - {scenario: 科普辟谣, n: 15, strict_mean: 0.9603, net_gain: 0.0839}
+      - {scenario: 急症处置, n: 21, strict_mean: 0.9627, net_gain: 0.0513}
+      - {scenario: 权益匹配, n: 15, strict_mean: 0.9634, net_gain: 0.0818}
+      - {scenario: 复诊与随访, n: 17, strict_mean: 0.9653, net_gain: 0.0801}
+      - {scenario: 用药咨询, n: 19, strict_mean: 0.9693, net_gain: 0.0933}
     ci95: [0.9475, 0.9874]
     verdict: 达标
     command: python3 metrics/run_eval.py --live

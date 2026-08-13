@@ -24,6 +24,7 @@ from metrics.run_eval import (  # noqa: E402
     mock_output,
     write_guard_faithfulness_actual,
     write_kpi1_actual,
+    write_kpi1_macro_by_scenario,
 )
 from metrics.wilson import wilson  # noqa: E402
 
@@ -363,5 +364,66 @@ def test_guard_faithfulness_write_is_a_noop_when_no_judged_rows(tmp_path):
     before = kpi.read_text(encoding="utf-8")
 
     write_guard_faithfulness_actual([], kpi_path=kpi)
+
+    assert kpi.read_text(encoding="utf-8") == before
+
+
+# ---------- write_kpi1_macro_by_scenario：12 场景可读性宏平均，此前只印到
+# aggregate() 的 stdout，从没写成 kpi.yaml 里的结构化数据。
+
+def _fake_macro_rows():
+    rows = []
+    for i in range(3):
+        rows.append({"scenario": "用药咨询", "strict": 0.95, "net_gain": 0.08})
+    for i in range(2):
+        rows.append({"scenario": "日常照护", "strict": 0.90, "net_gain": 0.05})
+    return rows
+
+
+def test_kpi1_macro_by_scenario_is_written_as_a_list_of_per_scenario_stats(tmp_path):
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_kpi1_macro_by_scenario(_fake_macro_rows(), kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    k1 = next(m for m in data["metrics"] if m["id"] == "kpi1_readability")
+    macro = k1["actual_macro_by_scenario"]
+    assert isinstance(macro, list) and len(macro) == 2
+    by_scenario = {row["scenario"]: row for row in macro}
+    assert by_scenario["用药咨询"]["n"] == 3
+    assert by_scenario["用药咨询"]["strict_mean"] == 0.95
+    assert by_scenario["用药咨询"]["net_gain"] == 0.08
+    assert by_scenario["日常照护"]["n"] == 2
+
+
+def test_kpi1_macro_by_scenario_does_not_disturb_other_fields(tmp_path):
+    """局部替换必须只碰 actual_macro_by_scenario 这一行——同一段里 actual/ci95/
+    kpi2/guard_faithfulness 的 null 不该被牵连。"""
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_kpi1_macro_by_scenario(_fake_macro_rows(), kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    k1 = next(m for m in data["metrics"] if m["id"] == "kpi1_readability")
+    kpi2 = next(m for m in data["metrics"] if m["id"] == "kpi2_scenario_coverage")
+    gf = next(m for m in data["metrics"] if m["id"] == "guard_faithfulness")
+    assert k1["actual"] is None
+    assert k1["ci95"] is None
+    assert kpi2["actual"] is None
+    assert gf["actual"] is None
+
+
+def test_kpi1_macro_by_scenario_is_a_noop_when_no_rows(tmp_path):
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+    before = kpi.read_text(encoding="utf-8")
+
+    write_kpi1_macro_by_scenario([], kpi_path=kpi)
 
     assert kpi.read_text(encoding="utf-8") == before

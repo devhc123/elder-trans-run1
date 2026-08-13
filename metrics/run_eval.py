@@ -373,6 +373,7 @@ def _write_kpi(run_id: str, rows: list[dict], jrows: list[dict]) -> None:
     text += f"judge_note: Claude Sonnet 5 session subagent；可审计不可复现，留痕见 runs/{run_id}/\n"
     KPI.write_text(text, encoding="utf-8")
     write_kpi1_actual(rows, kpi_path=KPI)
+    write_kpi1_macro_by_scenario(rows, kpi_path=KPI)
     write_guard_faithfulness_actual(jrows, kpi_path=KPI)
 
 
@@ -454,6 +455,55 @@ def write_guard_faithfulness_actual(jrows: list[dict], kpi_path: Path = KPI) -> 
         "    actual: null\n    ci95: null",
         f"    actual: {rate}\n    ci95: [{round(lo,4)}, {round(hi,4)}]",
     )
+
+    text = text[:start] + block + text[end:]
+    kpi_path.write_text(text, encoding="utf-8")
+
+
+def write_kpi1_macro_by_scenario(rows: list[dict], kpi_path: Path = KPI) -> None:
+    """回填 kpi1_readability 的 `actual_macro_by_scenario`——12 场景的可读性
+    宏平均，此前只印到 aggregate() 的 stdout，从没写成 kpi.yaml 里的结构化
+    数据。宏平均口径：先按场景分组各自取 strict 均值，再看 12 个场景值本身
+    （不是把全部词拉平算微平均，那是 kpi1_strict_mean 的口径，两者不能混）。
+
+    只替换 `actual_macro_by_scenario: null` 这一行，且限定在 kpi1_readability
+    段内（同 write_kpi1_actual 的定位方式），不做整份 YAML 反序列化重写。
+    rows 为空（尚无跑数）时不写。
+    """
+    if not rows:
+        return
+
+    def mean(xs):
+        xs = list(xs)
+        return round(sum(xs) / len(xs), 4) if xs else None
+
+    scs: dict[str, list[dict]] = {}
+    for r in rows:
+        scs.setdefault(r["scenario"], []).append(r)
+
+    entry_lines = []
+    for s in sorted(scs, key=lambda s: mean(x["strict"] for x in scs[s])):
+        v = scs[s]
+        entry_lines.append(
+            f"      - {{scenario: {s}, n: {len(v)}, "
+            f"strict_mean: {mean(x['strict'] for x in v)}, "
+            f"net_gain: {mean(x['net_gain'] for x in v)}}}"
+        )
+    new_block = "    actual_macro_by_scenario:\n" + "\n".join(entry_lines) + "\n"
+
+    text = kpi_path.read_text(encoding="utf-8")
+    start = text.find("  - id: kpi1_readability")
+    if start == -1:
+        return
+    end = text.find("\n  - id: kpi2_scenario_coverage", start)
+    if end == -1:
+        return
+    block = text[start:end]
+
+    old_line = "    actual_macro_by_scenario: null   # 12 场景表，还没写成结构化数据（目前只印到 stdout）\n"
+    if old_line not in block:
+        return
+    block = block.replace(old_line, new_block)
 
     text = text[:start] + block + text[end:]
     kpi_path.write_text(text, encoding="utf-8")
