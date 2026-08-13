@@ -16,17 +16,20 @@ sys.path.insert(0, str(ROOT))
 
 from verifier.train_lora import (  # noqa: E402
     BASE_MODEL,
+    DEFAULT_CANDIDATE_DATA_OUT,
     FALLBACK_MODEL,
     MAX_SEQ,
     RESPONSE_MARKER,
     SCALE_UP_MODEL,
     SYSTEM,
     SYSTEM_CANDIDATE,
+    build_arg_parser,
     build_candidate_prompt,
     build_candidate_target,
     build_candidate_training_pool,
     build_prompt,
     build_target,
+    candidate_id,
     infer_is_positive,
     make_candidate_dataset,
     make_dataset,
@@ -355,6 +358,41 @@ def test_make_candidate_dataset_rows_are_training_ready():
     assert all(isinstance(v, str) and v for v in r.values())
 
 
+def test_candidate_id_is_the_single_definition_used_by_make_candidate_dataset():
+    """候选 id 的格式只许有一处定义。
+
+    `predict_lora.py` 的候选级推理要按同一格式建索引、`eval_candidate_verifier.py`
+    要按同一格式 join 预测与 gold——三处各写一份 f-string，格式一漂移就静默对不上，
+    表现是「验收集里所有条目都缺预测」而不是报错。同 `TEMPLATE_PREFIXES` /
+    `STRUCTURAL_NEGATIVE_SUFFIX` 那两次去重的纪律。
+    """
+    item = _candidate_item(candidate_text="阿司匹林")
+    assert candidate_id(item) == f"{item['case_id']}::阿司匹林"
+    assert make_candidate_dataset([item])[0]["case_id"] == candidate_id(item)
+
+
+def test_candidate_data_out_default_lands_where_the_deploy_precheck_reads():
+    """`--candidate-data-out` 的默认值必须是仓库里 `verifier/work/` 下的绝对路径。
+
+    部署预检读的是 `verifier/work/candidate_train.jsonl`；默认值若是 cwd 相对路径，
+    会出现「重建过了，但预检读的是几天前的旧文件，而且全绿」——正是 ticket 16/20
+    这一批要堵的那类坑（看起来成功和真正成功长得一样）。
+    """
+    assert DEFAULT_CANDIDATE_DATA_OUT.is_absolute()
+    assert DEFAULT_CANDIDATE_DATA_OUT.parts[-3:] == ("verifier", "work", "candidate_train.jsonl")
+
+
+def test_data_flag_default_stays_a_relative_path():
+    """`--data` 的默认值**刻意**保持 cwd 相对路径。
+
+    ticket 14 记过这个决定：从仓库根不传 `--data` 会 FileNotFoundError，这是刻意的
+    （逼调用方显式声明训练输入是哪份）。ticket 16 只改输出路径的默认值，不许顺手
+    把这个也一起「修好」。
+    """
+    ap = build_arg_parser()
+    assert ap.get_default("data") == Path("train.jsonl")
+
+
 def test_make_candidate_dataset_case_id_disambiguates_multiple_candidates_per_case():
     """同一案例的多个候选必须映射到不同的训练行 case_id，否则
     predict_lora.py 推理完没法把结果一一对回来。"""
@@ -494,3 +532,46 @@ def test_response_marker_matches_render_prompt_tail():
     错位不报错，只会让 loss 遮罩偏移、静默训坏。"""
     p = render_prompt("SYS", "IN")
     assert p.endswith(RESPONSE_MARKER)
+
+
+# ---------- SFTConfig 参数名探测（ticket 20） ----------
+#
+# `SFTConfig(max_seq_length=...)` 在较新版 TRL 里改名成了 `max_length`。
+# `verifier/work/pilot_train.log` 记下了 ticket 09 当天的 Unsloth 2026.8.15 /
+# Transformers 5.5.0 / Torch 2.11.0+cu130，**唯独没有 TRL 版本**——"锁定当年
+# 验证过的版本"这条缓解措施对这个具体风险无效。所以运行时探测。
+#
+# 为什么不能"探测不到就不传"：这个脚本自己的 docstring 写着早期设 4096 会
+# **静默截断**，被截掉的正是排在最后的红线部分和输出目标，训出来的模型等于
+# 没见过红线。宁可在训练开始前显式报错，也不要静默用一个更小的默认值。
+
+from dataclasses import dataclass  # noqa: E402
+
+from verifier.train_lora import sft_config_kwargs  # noqa: E402
+
+
+@dataclass
+class _OldTRL:
+    max_seq_length: int = 1024
+
+
+@dataclass
+class _NewTRL:
+    max_length: int = 1024
+
+
+@dataclass
+class _AlienTRL:
+    something_else: int = 1024
+
+
+def test_sft_config_kwargs_maps_to_whichever_name_this_trl_has():
+    assert sft_config_kwargs(_OldTRL, 8192) == {"max_seq_length": 8192}
+    assert sft_config_kwargs(_NewTRL, 8192) == {"max_length": 8192}
+
+
+def test_sft_config_kwargs_raises_rather_than_silently_dropping_the_limit():
+    """两个名字都没有时必须炸。静默不传 = 用 TRL 的默认上限跑 = 训练目标被
+    截断而没有任何信号，正是本脚本反复强调要防的那类失败。"""
+    with pytest.raises(RuntimeError, match="max_seq_length|max_length"):
+        sft_config_kwargs(_AlienTRL, 8192)

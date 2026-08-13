@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import sys
 from pathlib import Path
@@ -38,6 +39,17 @@ MAX_SEQ = 8192
 # 验收集里 fail 样本的目标占比。刻意高于总体的 20.7%——正例稀缺，
 # 随机切会让本就不足的统计功效更差。
 HOLDOUT_FAIL_RATIO = 0.30
+
+# `--make-candidate-data` 的默认输出路径。**必须是仓库 `verifier/work/` 下的
+# 绝对路径**：`deploy/runpod_pilot.sh` 的零成本预检读的就是这个位置。默认值
+# 若是 cwd 相对路径，就会出现"重建过了，但预检读到的是几天前的旧文件，而且
+# 全绿"——本项目反复踩过的"看起来成功和真正成功长得一样"那一类坑。
+#
+# 注意这与 `--data` 的默认值不同：那个**刻意**保持 cwd 相对路径（从仓库根不传
+# 会 FileNotFoundError），逼调用方显式声明训练输入是哪一份，见 ticket 14。
+DEFAULT_CANDIDATE_DATA_OUT = (
+    Path(__file__).resolve().parent.parent / "verifier" / "work" / "candidate_train.jsonl"
+)
 
 # 训练用的对话模板。**用 Base 模型就必须自己定模板**——这既是选 Base 的代价，
 # 也是选 Base 的理由：不与指令版的 chat template 和 thinking 机制打架。
@@ -196,17 +208,27 @@ def build_candidate_target(item: dict) -> str:
     return json.dumps({"violated": item["label"]}, ensure_ascii=False)
 
 
+def candidate_id(item: dict) -> str:
+    """候选级条目的训练/推理行 id：`"{来源case_id}::{候选文本}"`。
+
+    `extract_candidates` 在同一案例内本来就按文本去重，同案例内候选文本互不
+    相同，这个组合天然唯一，不需要额外计数器。
+
+    **这是这个格式的唯一定义处。** `predict_lora.py` 的候选级推理按它建索引、
+    `eval_candidate_verifier.py` 按它把预测 join 回 gold——三处各写一份
+    f-string，格式一漂移就静默对不上，表现是"验收集里所有条目都缺预测"而不是
+    报错（同 `TEMPLATE_PREFIXES`/`STRUCTURAL_NEGATIVE_SUFFIX` 那两次去重的
+    纪律：一个魔法字符串有三份独立副本，改一处忘改另一处没有任何信号）。"""
+    return f"{item['case_id']}::{item['candidate_text']}"
+
+
 def make_candidate_dataset(pool: list[dict]) -> list[dict]:
     """把 `candidate_pool.build_trusted_candidate_pool()` /
     `synth_minimal_edit.synthetic_records_to_candidates()` 的候选级条目
-    转成训练/推理行。
-
-    候选级 `case_id` 用 `"{来源case_id}::{候选文本}"`——`extract_candidates`
-    在同一案例内本来就按文本去重，同案例内候选文本互不相同，这个组合天然
-    唯一，不需要额外计数器。"""
+    转成训练/推理行。"""
     out = []
     for item in pool:
-        cand_id = f"{item['case_id']}::{item['candidate_text']}"
+        cand_id = candidate_id(item)
         out.append({
             "case_id": cand_id,
             "system": SYSTEM_CANDIDATE,
@@ -287,6 +309,29 @@ def infer_is_positive(rows: list[dict]):
     raise ValueError(f"无法识别的输出 schema（既无 violated 也无 verdict 字段）：{sample}")
 
 
+def sft_config_kwargs(sft_config_cls, max_seq: int) -> dict:
+    """按这台机器上实际装的 TRL，决定序列长度上限该传哪个参数名。
+
+    **为什么要探测而不是锁版本**：`SFTConfig(max_seq_length=...)` 在较新版 TRL
+    里改名成了 `max_length`。`verifier/work/pilot_train.log` 记下了 ticket 09
+    当天的 Unsloth 2026.8.15 / Transformers 5.5.0 / Torch 2.11.0+cu130——
+    **唯独没有 TRL 版本**，所以"锁定当年验证过的版本"对这个具体风险无效。
+
+    **为什么探测不到要抛异常、不能悄悄不传**：本模块 docstring 写着早期设
+    4096 会**静默截断**，被截掉的正是排在最后的红线部分和输出目标，训出来的
+    模型等于没见过红线。不传就是用 TRL 的默认上限跑，同一种静默故障。宁可在
+    建机之后、训练开始之前显式炸掉（浪费几分钟机时），也不要训完才发现。"""
+    params = inspect.signature(sft_config_cls).parameters
+    for name in ("max_seq_length", "max_length"):
+        if name in params:
+            return {name: max_seq}
+    raise RuntimeError(
+        f"{sft_config_cls.__name__} 既没有 max_seq_length 也没有 max_length——"
+        f"TRL 又改了参数名。不能不传：那会让序列上限退回 TRL 默认值，训练目标"
+        f"被静默截断（本脚本 docstring 记过这个坑）。先核实当前 TRL 的参数名。"
+    )
+
+
 def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int,
           oversample_fail: int = 1) -> int:
     try:
@@ -346,7 +391,9 @@ def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int,
             output_dir=str(out_dir),
             report_to="none",
             dataset_text_field="text",
-            max_seq_length=MAX_SEQ,
+            # 参数名随 TRL 版本变（max_seq_length -> max_length），运行时探测，
+            # 探不到就抛错而不是静默用默认上限——见 sft_config_kwargs。
+            **sft_config_kwargs(SFTConfig, MAX_SEQ),
         ),
     )
 
@@ -370,14 +417,20 @@ def train(data_path: Path, out_dir: Path, model: str, epochs: int, bsz: int,
     return 0
 
 
-def main() -> int:
+def build_arg_parser() -> argparse.ArgumentParser:
+    """CLI 定义单独成函数，供测试直接检查默认值。
+
+    默认值本身就是行为的一部分（`--data` 刻意相对、`--candidate-data-out`
+    必须绝对），埋在 `main()` 里就只能靠人记得，测不到。"""
     ap = argparse.ArgumentParser()
     ap.add_argument("--make-data", action="store_true", help="从标注产出训练集（本机跑）")
     ap.add_argument("--make-candidate-data", action="store_true",
                     help="组装候选级训练集（ticket 14，本机跑）：train 切分"
                          "可信池（pass案例负例+fail案例可信正例）+ train 切分"
                          "合成正例")
-    ap.add_argument("--candidate-data-out", type=Path, default=Path("candidate_train.jsonl"))
+    ap.add_argument("--candidate-data-out", type=Path, default=DEFAULT_CANDIDATE_DATA_OUT,
+                    help="候选级训练集的写出路径，默认是 deploy 预检实际会读的那个"
+                         "位置（verifier/work/candidate_train.jsonl，仓库绝对路径）")
     ap.add_argument("--data", type=Path, default=Path("train.jsonl"),
                     help="训练输入路径——train() 与 --make-candidate-data 都读它"
                          "（--make-data 例外：那个模式从 to_label.json/labels/*.jsonl"
@@ -394,7 +447,11 @@ def main() -> int:
                          "要求：训练集红线正例曾低到约 1.6%%，不处理大概率复现 09"
                          "的坍缩。从 1（不采样）开始在 held-out 上网格搜索，"
                          "不要拍一个数")
-    args = ap.parse_args()
+    return ap
+
+
+def main() -> int:
+    args = build_arg_parser().parse_args()
 
     if args.make_candidate_data:
         # 惰性导入（同 build_candidate_training_pool 的理由：candidate_pool
@@ -405,6 +462,7 @@ def main() -> int:
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
         from verifier.candidate_pool import STRUCTURAL_NEGATIVE_SUFFIX
+        from verifier.shortcut_probes import report as report_shortcut_probes
 
         # **读 args.data，不硬编码路径**（code review 发现：硬编码曾经让
         # --data 被静默忽略——同一个标志在这个脚本里既是 train() 的输入，
@@ -430,6 +488,12 @@ def main() -> int:
               "「括注即违规」这个纯结构捷径）")
         # 绝不只报总体准确率能算出的假象数字——这里只报正负比例，不是准确率，
         # 但仍然按项目纪律把红线0/2分开列，供后续训练配置参考。
+        # 退化分类器探针（ticket 17），只打印不改退出码——训练池的探针不设门
+        # （J 上限恒等于合成正例占比，见 shortcut_probes 模块注释），但每次
+        # 重建都要留下这张表，否则"这轮改动到底把捷径压下去没有"就没有对照。
+        report_shortcut_probes(pool, "候选级训练池（只报告，不设门）")
+
+        args.candidate_data_out.parent.mkdir(parents=True, exist_ok=True)
         args.candidate_data_out.write_text(
             "\n".join(json.dumps(r, ensure_ascii=False) for r in ds), encoding="utf-8"
         )

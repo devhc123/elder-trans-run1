@@ -283,6 +283,14 @@ def main() -> int:
     print(f"{args.split} {len(records)} 条 -> 可信候选池 {len(pool)} 条"
           f"（正例 {n_pos}：红线0 {n_rl0} / 红线2 {n_rl2}；负例 {n_neg}）")
 
+    # 退化分类器探针（ticket 17）。可信池里没有任何注入结构，这张表在这里
+    # 基本恒为 0——正因如此它是个有用的对照：同一组探针在对抗子集/训练池上
+    # 一旦不为 0，差异就全部来自合成注入，不是来自真实数据本身。
+    # 惰性导入：`shortcut_probes` 会 import `synth_minimal_edit`，而本模块被
+    # `adversarial_subset` 顶层导入，顶层互相 import 会成环。
+    from verifier.shortcut_probes import report as report_shortcut_probes
+    report_shortcut_probes(pool, f"可信候选池（{args.split}）")
+
     out = args.out or (WORK / f"trusted_candidate_pool_{args.split}.json")
     WORK.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(pool, ensure_ascii=False, indent=2), encoding="utf-8")

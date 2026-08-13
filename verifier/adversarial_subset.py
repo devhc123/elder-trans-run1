@@ -37,6 +37,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from verifier.candidate_pool import build_structural_negatives, load_jargon  # noqa: E402
+from verifier.shortcut_probes import report as report_shortcut_probes  # noqa: E402
 from verifier.synth_minimal_edit import (  # noqa: E402
     synthesize_all,
     synthetic_records_to_candidates,
@@ -72,6 +73,11 @@ def main() -> int:
     print(f"holdout {len(records)} 条 -> 对抗子集 {len(subset)} 条"
           f"（正例 {n_pos}：红线0 {n_rl0} / 红线2 {n_rl2}；结构性负例 {n_neg}）"
           f"（L2 门槛正例数 ≥{MIN_SIZE} -> {'通过' if ok else '未通过'}）")
+
+    # 退化分类器探针（ticket 17）。这里**只打印不改退出码**——本 CLI 的退出码
+    # 由 L2 的正例数门槛决定，探针的强制点在 `shortcut_probes.py --gate` 与
+    # 部署预检那里，一个 CLI 不该有两套互相打架的判据。
+    report_shortcut_probes(subset, "对抗子集（holdout）")
 
     WORK.mkdir(parents=True, exist_ok=True)
     out = WORK / "adversarial_subset_holdout.json"
