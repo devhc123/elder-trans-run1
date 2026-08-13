@@ -134,6 +134,37 @@ def extract_candidates(source_text: str, answer: str, jargon: set[str]) -> list[
     return out
 
 
+_ORDINAL_RE_CACHE: dict[str, re.Pattern] = {}
+
+
+def is_list_ordinal(candidate_text: str, answer: str) -> bool:
+    """这个数字候选是不是 answer 自己的 Markdown 有序列表序号（"3. …"）。
+
+    **不是事实数字。** 六个盲评教师 agent 在 ticket 23 的补标里各自独立报了
+    同一件事：抽出来的数字候选里有一大批是回答的列表编号。实测：全池 red_line
+    2（数字类）候选里 **train 62% / holdout 65%** 是这种序号，452 条补标样本里
+    教师对它们 **108/108 一致判无违规**。
+
+    危害有两层：
+    ① **稀释**——红线2 的误报率分母里近三分之二是免费送分的负例；
+    ② **错标**——`derive_candidate_label` 按**值**匹配 evidence，序号 "5." 恰好
+       等于 evidence「按一下大约5～6厘米深」里的 5，就被判成红线2 正例。实测
+       holdout 的 19 条红线2 正例里有 **4 条（21%）**是这么来的，而那正是 ≤5%
+       漏报门槛要测的池子。整段匹配那次修复管不到这个：值真的相同，不同的是
+       **出现位置**。
+
+    只做识别、不做过滤——段A 是不是该把它们滤掉是 ticket 28 的事（"1片"和序号
+    "1"是同一个字符串，只能靠位置区分，动它要先确认不会误伤真实剂量）。
+    """
+    if not candidate_text.isdigit():
+        return False
+    if candidate_text not in _ORDINAL_RE_CACHE:
+        _ORDINAL_RE_CACHE[candidate_text] = re.compile(
+            rf"(?m)^\s*{re.escape(candidate_text)}[.、)]"
+        )
+    return bool(_ORDINAL_RE_CACHE[candidate_text].search(answer))
+
+
 def flag_case(source_text: str, answer: str, jargon: set[str]) -> bool:
     """case 级别：只要有一个候选，就打旗标（供 P1 召回评测用）。"""
     return bool(extract_candidates(source_text, answer, jargon))

@@ -371,3 +371,35 @@ def test_load_pred_reads_jsonl(tmp_path):
     p = tmp_path / "pred.jsonl"
     p.write_text(json.dumps({"case_id": "x::y", "violated": True}) + "\n", encoding="utf-8")
     assert load_pred(p)["x::y"]["violated"] is True
+
+
+# ---------- 列表序号切片（ticket 23 教师补标发现，ticket 28 决定要不要在段A滤） ----------
+
+def test_list_ordinal_detection_needs_line_start_not_just_a_digit():
+    """"1片"里的 1 和列表序号 "1." 是**同一个字符串**，只能靠位置区分。
+    识别错了会把真实剂量数字当序号剔掉，那是把验收集挖空。"""
+    from verifier.redline_candidates import is_list_ordinal
+    ans = "医生说：\n1. 每天吃药\n2. 按时复查\n每次吃1片就够了。"
+    assert is_list_ordinal("1", ans) is True      # 行首 "1."
+    assert is_list_ordinal("3", ans) is False     # 没有 "3." 这一行
+    assert is_list_ordinal("片", ans) is False    # 非数字
+    assert is_list_ordinal("1", "每次吃1片") is False   # 只有剂量，没有序号行
+
+
+def test_red_line_2_is_also_reported_with_ordinals_removed(capsys):
+    """红线2 候选里 62-65% 是列表序号（教师 108/108 判无违规）。不剔除的话，
+    误报率的分母近三分之二是免费送分的负例。两个数字必须并列报出来。"""
+    ordinal_answer = "医生说：\n1. 按时吃药\n2. 定期复查\n"
+    pool = [
+        _item("c1", "1", False, answer=ordinal_answer, red_line=2),
+        _item("c1", "2", False, answer=ordinal_answer, red_line=2),
+        _item("c2", "500", True, red_line=2),
+    ]
+    m = evaluate(pool, _pred(pool, lambda it: it["label"]))
+    assert m["n_list_ordinals"] == 2
+    assert m["red_line_2_excluding_ordinals"]["positives"] == 1
+    assert m["red_line_2_excluding_ordinals"]["negatives"] == 0
+    report(m, None)
+    out = capsys.readouterr().out
+    assert "剔除列表序号后的红线2" in out
+    assert "才是能引用的红线2 数字" in out

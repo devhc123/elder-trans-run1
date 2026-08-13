@@ -43,6 +43,7 @@ sys.path.insert(0, str(ROOT))
 
 from metrics.wilson import wilson  # noqa: E402
 from verifier.candidate_pool import STRUCTURAL_NEGATIVE_SUFFIX  # noqa: E402
+from verifier.redline_candidates import is_list_ordinal  # noqa: E402
 from verifier.shortcut_probes import PROBES, STRUCTURE_PROBES, ProbeScore, score_pool  # noqa: E402
 from verifier.train_lora import candidate_id  # noqa: E402
 
@@ -181,6 +182,17 @@ def evaluate(pool: list[dict], pred: dict[str, dict]) -> dict:
         rl: _rates(*counts([s for s in scored if s[0].get("red_line_guess") == rl]))
         for rl in (0, 2)
     }
+    # 剔除列表序号后的红线2（ticket 23 的教师补标发现，量化见
+    # `redline_candidates.is_list_ordinal`）：红线2 候选里 62-65% 是回答自己的
+    # Markdown 列表编号，不是事实数字。不剔除的话，红线2 的误报率分母有近三分之二
+    # 是免费送分的负例，漏报率分母里还混着按值误命中 evidence 的假正例。
+    # **两个数字并列报**——这里不改数据，只让稀释可见（ticket 28 决定要不要在段A
+    # 就滤掉它们）。
+    rl2_clean = [s for s in scored
+                 if s[0].get("red_line_guess") == 2
+                 and not is_list_ordinal(s[0]["candidate_text"], s[0]["answer"])]
+    n_ordinal = sum(1 for s in scored
+                    if is_list_ordinal(s[0]["candidate_text"], s[0]["answer"]))
     by_flavor = {}
     for _, label in NEGATIVE_FLAVORS + ((None, PLAIN_NEGATIVE),):
         subset = [s for s in scored if not s[0]["label"] and negative_flavor(s[0]) == label]
@@ -204,6 +216,8 @@ def evaluate(pool: list[dict], pred: dict[str, dict]) -> dict:
         "parse_fail": parse_fail,
         "overall": overall,
         "by_red_line": by_red_line,
+        "red_line_2_excluding_ordinals": _rates(*counts(rl2_clean)),
+        "n_list_ordinals": n_ordinal,
         "by_negative_flavor": by_flavor,
         "mixed": {
             "n_answers": len(mixed),
@@ -263,6 +277,15 @@ def _print_split(m: dict, title: str) -> None:
             continue
         print(f"    {label}：正例 {r['positives']}，漏报 {r['miss_rate']:.1%}"
               f"（上界 {r['miss_rate_upper']:.1%}）；负例 {r['negatives']}，误报 {r['false_alarm']:.1%}")
+    x = m["red_line_2_excluding_ordinals"]
+    if m["n_list_ordinals"]:
+        print(f"  ── 剔除列表序号后的红线2（本池含 {m['n_list_ordinals']} 条序号候选）──")
+        print(f"    正例 {x['positives']}，漏报 {x['miss_rate']:.1%}"
+              f"（上界 {x['miss_rate_upper']:.1%}）；负例 {x['negatives']}，"
+              f"误报 {x['false_alarm']:.1%}")
+        print("    序号是回答自己的 Markdown 编号、不是事实数字（教师 108/108 判无违规）。"
+              "上面那行红线2 的分母里近三分之二是它们，**这一行才是能引用的红线2 数字**。")
+
     if len(m["by_negative_flavor"]) > 1:
         print("  ── 负例按来源分开报（难度不同，混在一起看不出靠哪类过关）──")
         for label, r in m["by_negative_flavor"].items():
