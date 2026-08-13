@@ -321,3 +321,44 @@ def test_passing_the_gate_is_never_reported_as_clean(capsys):
     assert "不构成" in gate_line[0]
     # 不许出现肯定式的通过标记——"干净"只允许出现在否定句里
     assert "✓" not in gate_line[0]
+
+
+# ---------- kind 一致性断言 ----------
+
+def test_stored_kind_must_agree_with_the_candidate_shape():
+    """**这条断言的来历**：修 digit 捷径时，我给注入负例写的 `candidate_text`
+    是「3天」，而段A 的 `DIGIT_RE` 从答案里抽出来的其实是裸数字「3」。
+    存储的 `kind` 写着 `digit`、`infer_kind("3天")` 却推断出 `lexicon`——
+    探针信字段、临时脚本信推断，两者给出不同答案，**都不报错**。
+
+    后果不是"探针算错了一点"，是候选形状与生产分布对不上（A3 那轮修过的同类
+    错误），而伪装成"探针没测出效果"。写死这条不变量：字段与形状必须一致，
+    不一致就是有人把候选文本或 kind 写错了，当场炸。"""
+    with pytest.raises(ValueError, match="kind"):
+        score_pool([_item("3天", False, kind="digit"), _item("阿司匹林", True)])
+
+
+def test_kind_consistency_error_names_the_offenders():
+    """报错要能直接定位——只说"有不一致"等于让人自己再写一遍检查脚本。"""
+    with pytest.raises(ValueError) as e:
+        score_pool([_item("3天", False, kind="digit")])
+    assert "3天" in str(e.value)
+
+
+def test_items_without_a_kind_field_are_fine():
+    """`synthetic_records_to_candidates` 产出的条目本来就没有 kind
+    （只有 red_line_guess），那条路径靠推断，不该被这条断言误伤。"""
+    scores = score_pool([_item("阿司匹林", True), _item("硝苯地平", False)])
+    assert scores["candidate_kind_is_lexicon"].tp >= 0
+
+
+def test_digit_shape_probe_exists_and_is_report_only():
+    """**Fable 5 审计 B 的产物。** 套件原来只有"是不是词表词"，对
+    digit / cn_numeral 之间的倾斜完全瞎——而那正是当时最强的活口
+    （红线2 切片 J=0.722）。kind 是候选文本的形状，不读原文就能看见，
+    所以必须有一条探针盯着它。"""
+    names = {n for n, _ in PROBES}
+    assert "candidate_is_digit" in names
+    assert "candidate_is_digit" in REPORT_ONLY_PROBES   # 分布探针，看趋势不设门
+    assert _probe("candidate_is_digit")(_item("3", True, kind="digit")) is True
+    assert _probe("candidate_is_digit")(_item("三天", True, kind="cn_numeral")) is False

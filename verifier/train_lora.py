@@ -243,8 +243,8 @@ def build_candidate_training_pool(train_records: list[dict]) -> list[dict]:
     正例（`candidate_pool.build_trusted_candidate_pool`）+ 教师直接判定过
     的"不确定候选"（`teacher_candidates_train.jsonl`，第三轮独立审计问题
     二的修复）+ train 切分合成正例（`synth_minimal_edit.synthesize_all`）
-    + 结构性负例（`candidate_pool.build_structural_negatives`，第三轮独立
-    审计问题一的修复——打掉"答案带括注就判违规"这个纯结构捷径）。
+    + 两类注入负例（`candidate_pool.build_injection_negatives`——grounded 药名
+    注入 + 等价形式数字注入，打掉"候选落在括注内就判违规"这个位置捷径）。
 
     **惰性导入**：`candidate_pool`/`redline_candidates`/`synth_minimal_edit`
     不在 `deploy/runpod_pilot.sh` 的 RunPod 传输清单里（那份清单只 scp
@@ -275,9 +275,15 @@ def build_candidate_training_pool(train_records: list[dict]) -> list[dict]:
     # 两类注入负例按 **kind 分别配平**（ticket 26）：实体负例对齐实体正例、
     # 数字负例把可用的全用上。用一个总数上限截断会让 kind 分布随机倾斜，
     # 而 ticket 17 的探针⑦ 正是盯这个的。
+    from collections import Counter
+
+    from verifier.shortcut_probes import infer_kind
     n_entity_pos = sum(1 for it in synthetic if it["red_line_guess"] == 0)
+    numeric_kinds = Counter(infer_kind(it["candidate_text"])
+                            for it in synthetic if it["red_line_guess"] == 2)
     injection_negatives = build_injection_negatives(
-        train_records, jargon, max_entity=n_entity_pos, max_equivalent=None
+        train_records, jargon, max_entity=n_entity_pos,
+        numeric_kind_targets=dict(numeric_kinds),
     )
     return trusted + teacher_labeled + synthetic + injection_negatives
 

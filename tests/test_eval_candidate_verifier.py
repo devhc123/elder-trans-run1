@@ -36,12 +36,16 @@ _INJECTED = _BODY + "\n\n（补充一句：像华法林这类药，也是您问�
 
 
 def _item(case_id, text, label, *, answer=_BODY, red_line=0):
+    # kind **按文本形状推断，不写死**——写死成 "lexicon" 再传一个 "3" 进来，
+    # 就是 `shortcut_probes` 那条 kind 一致性断言存在的理由（它当场抓到了这份
+    # 夹具的旧写法）。夹具自己都对不上口径的话，测出来的探针数字没有意义。
+    from verifier.shortcut_probes import infer_kind
     return {
         "case_id": case_id,
         "source_text": "本药物用于降压治疗，与抗凝类药物合用需注意。",
         "answer": answer,
         "candidate_text": text,
-        "kind": "lexicon",
+        "kind": infer_kind(text),
         "red_line_guess": red_line,
         "label": label,
     }

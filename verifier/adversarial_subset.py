@@ -47,10 +47,7 @@ WORK = ROOT / "verifier" / "work"
 MIN_SIZE = 50  # L2 判读规则的门槛
 
 
-def build_adversarial_subset(
-    records: list[dict], jargon: set[str] | None = None, *,
-    include_equivalent_form: bool = True,
-) -> list[dict]:
+def build_adversarial_subset(records: list[dict], jargon: set[str] | None = None) -> list[dict]:
     """holdout 源文本合成的正例 + 两类注入负例（ticket 26）。
 
     **负例只放注入类，不混普通可信负例。** 两种配比的探针 J 都算过：只放注入
@@ -64,12 +61,17 @@ def build_adversarial_subset(
     90–95% 时等价形式负例只进训练池、不进这份冻结验收集（训练池里混几条错标
     是稀释，验收集里混几条错标是整个 L2 门槛的数字不可信）。"""
     positives = synthetic_records_to_candidates(synthesize_all(records, holdout=True))
+    from collections import Counter
+
+    from verifier.shortcut_probes import infer_kind
     n_entity = sum(1 for p in positives if p["red_line_guess"] == 0)
-    n_numeric = sum(1 for p in positives if p["red_line_guess"] == 2)
+    # 数字类负例按**正例的 kind 分布**取配额，不是按总数截断——见
+    # `build_injection_negatives` 里那段注释（红线2 切片的形状捷径）。
+    numeric_kinds = Counter(infer_kind(p["candidate_text"])
+                            for p in positives if p["red_line_guess"] == 2)
     negatives = build_injection_negatives(
         records, jargon if jargon is not None else load_jargon(),
-        max_entity=n_entity,
-        max_equivalent=n_numeric if include_equivalent_form else 0,
+        max_entity=n_entity, numeric_kind_targets=dict(numeric_kinds), holdout=True,
     )
     return positives + negatives
 
@@ -85,9 +87,13 @@ def main() -> int:
     n_neg = sum(1 for it in subset if it["label"] is False)
     n_rl0 = sum(1 for it in subset if it["label"] is True and it["red_line_guess"] == 0)
     n_rl2 = sum(1 for it in subset if it["label"] is True and it["red_line_guess"] == 2)
+    from verifier.candidate_pool import EQUIVALENT_FORM_SUFFIX
+    n_eq = sum(1 for it in subset if it["case_id"].endswith(EQUIVALENT_FORM_SUFFIX))
+    n_ground = n_neg - n_eq
     ok = n_pos >= MIN_SIZE
     print(f"holdout {len(records)} 条 -> 对抗子集 {len(subset)} 条"
-          f"（正例 {n_pos}：红线0 {n_rl0} / 红线2 {n_rl2}；结构性负例 {n_neg}）"
+          f"（正例 {n_pos}：红线0 {n_rl0} / 红线2 {n_rl2}；注入负例 {n_neg}——"
+          f"grounded {n_ground} + 等价形式 {n_eq}）"
           f"（L2 门槛正例数 ≥{MIN_SIZE} -> {'通过' if ok else '未通过'}）")
 
     # 退化分类器探针（ticket 17）。这里**只打印不改退出码**——本 CLI 的退出码

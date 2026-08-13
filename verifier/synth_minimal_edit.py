@@ -162,6 +162,19 @@ DIGIT_TO_CN: dict[int, str] = {
     1: "一", 2: "两", 3: "三", 4: "四", 5: "五",
     6: "六", 7: "七", 8: "八", 9: "九", 10: "十",
 }
+# 反向映射要认「一」和「两/二」两种写法
+CN_TO_DIGIT: dict[str, int] = {c: d for d, c in DIGIT_TO_CN.items()} | {"二": 2}
+_CN_DIGITS = "".join(CN_TO_DIGIT)
+
+# 等价形式只用**时间/剂量**类单位。原来用全量 `_UNIT_WORDS` 会产出
+# 「间隔至少一岁再服用」「间隔至少三倍再服用」这种胡话（Fable 5 审计 C，
+# train 41 条 / holdout 6 条）——标签按 span 口径没错，但句子语义荒谬，
+# 是"单位与模板语义不搭 ⇒ 负例"这个可学伪影，跟 grounded 注入拒绝非药名
+# 实体是同一条标准。
+_UNIT_WORDS_FOR_EQUIV = (
+    "星期", "礼拜", "小时", "钟头", "分钟", "毫升", "毫克", "公斤",
+    "天", "月", "周", "秒", "克", "升", "片", "粒", "颗", "次", "分",
+)
 # `(?<![\d.])` 不可省：没有它，`(\d+)(单位)` 会匹配到**小数的小数部分**——
 # 原文「保泰松0.1～0.2克」被抓成「2克」，生成的"等价形式"是「两克」，而
 # 两克 ≠ 0.2克，差 10 倍；「0.6~4.1倍」被抓成「1倍」同理。这两条会被标成
@@ -170,7 +183,17 @@ DIGIT_TO_CN: dict[int, str] = {
 # **这个 bug 是 ticket 25 的教师盲检抓出来的**：50 条里教师判 violated 的
 # 恰好只有 2 条，两条都是它。盲检的价值在这里体现得最直接——它不是在质检
 # "标签噪声"，是在质检生成器。
-_DIGIT_UNIT_RE = re.compile(rf"(?<![\d.])(\d+)({_UNIT_ALT})")
+# 左边界还要挡 `-`（Fable 5 审计 A）：原文「38.41-152-6分娩疼痛」里的 "6" 前面是
+# 连字符（编码尾巴），"分" 是「分娩」的首字，被匹配成「6分」→ 生成「六分」标 False
+# ——与 0.2克→两克同族的错标，已实测落进过训练池（vt-1290）。
+#
+# 单位集里**去掉「分」**：它在中文里同时是 分钟/分数/分饱，语义歧义最大
+# （「7分到8分饱」→「七分」、「评分≥2分」→「两分」被塞进时间语境的模板里）。
+# 「分钟」是独立单位、长度优先仍然匹配得到，损失只有真·"X分"这一种写法。
+_EQUIV_UNITS = tuple(u for u in _UNIT_WORDS_FOR_EQUIV if u != "分")
+_EQUIV_UNIT_ALT = "|".join(sorted(_EQUIV_UNITS, key=len, reverse=True))
+_DIGIT_UNIT_RE = re.compile(rf"(?<![\d.\-])(\d+)({_EQUIV_UNIT_ALT})")
+_CN_UNIT_RE = re.compile(rf"(?<![0-9])([{_CN_DIGITS}])({_EQUIV_UNIT_ALT})")
 
 
 def _numeric_spans(text: str) -> list[str]:
@@ -201,6 +224,23 @@ def _derive_slot_templates() -> tuple[str, ...]:
 
 SLOT_TEMPLATES = _derive_slot_templates()
 assert SLOT_TEMPLATES, "没能从 NUMERIC_INJECTIONS 派生出任何带槽模板——注入负例会整批消失"
+
+# **槽位模板必须跟正例一样按 train/holdout 切分**（`/code-review` 发现的 HIGH）。
+#
+# 正例的数字短语是分切分的（`_pick_numeric_injection` 用 `_NUMERIC_HOLDOUT_RESERVED`
+# 把最后 3 条留给 holdout）。而槽位模板一开始从**全部 8 条**派生、负例又不分切分，
+# 结果是：holdout 池里的负例会用到「间隔至少…」「一般连续用药不超过…」这两句
+# **train 专属**的措辞，而 holdout 的正例永远不会用它们——于是"见到这四个词就是
+# 负例"成了一条完美规则。实测：holdout 对抗子集 52/261 条负例（20%）带着一个
+# 正例从不出现的措辞；train 侧 259/499。
+#
+# 这正是本模块注释里写了三遍的那条不变量（"措辞一分叉，负例就又能被措辞特征
+# 认出来"）——写了三遍还是漏了，因为**没有任何探针测量措辞**，漏了不报错。
+def _split_slot_templates(holdout: bool) -> tuple[str, ...]:
+    pool = (NUMERIC_INJECTIONS[-_NUMERIC_HOLDOUT_RESERVED:] if holdout
+            else NUMERIC_INJECTIONS[:-_NUMERIC_HOLDOUT_RESERVED])
+    return tuple(t for t in SLOT_TEMPLATES
+                 if any(p.startswith(t.split("{n}")[0]) for p in pool))
 
 NUMERIC_WRAPPER = "（补充一句：{}。）"
 assert NUMERIC_WRAPPER.format("x").startswith(TEMPLATE_PREFIXES), (
@@ -532,17 +572,24 @@ def _spans_are_all_supported(phrase: str, nsrc: str, allow_equivalent: bool) -> 
     src_digits = set(DIGIT_RE.findall(nsrc))
     src_cn = set(CN_NUMERAL_RE.findall(nsrc))
     src_frac = set(FRACTION_RE.findall(nsrc))
-    equivalents = set()
+    # 等价集要**两个方向都装**：原文写「3天」时「三天」有依据（cn 方向），
+    # 原文写「三天」时「3」也有依据（digit 方向）。只装一个方向的话，另一个
+    # 方向的注入负例会被自己的不变量整批挡掉——digit 方向刚加上时就是这样，
+    # 产量恒为 0 而且不报错（Fable 5 审计 B 的修复过程中实测到）。
+    equivalent_cn: set[str] = set()
+    equivalent_digits: set[str] = set()
     if allow_equivalent:
         for m in _DIGIT_UNIT_RE.finditer(nsrc):
             d, unit = m.group(1), m.group(2)
-            if d.isdigit() and int(d) in DIGIT_TO_CN:
-                equivalents.add(DIGIT_TO_CN[int(d)] + unit)
+            if int(d) in DIGIT_TO_CN:
+                equivalent_cn.add(DIGIT_TO_CN[int(d)] + unit)
+        for m in _CN_UNIT_RE.finditer(nsrc):
+            equivalent_digits.add(str(CN_TO_DIGIT[m.group(1)]))
     for span in DIGIT_RE.findall(phrase):
-        if span not in src_digits:
+        if span not in src_digits and span not in equivalent_digits:
             return False
     for span in CN_NUMERAL_RE.findall(phrase):
-        if span not in src_cn and span not in equivalents:
+        if span not in src_cn and span not in equivalent_cn:
             return False
     for span in FRACTION_RE.findall(phrase):
         if span not in src_frac:
@@ -566,19 +613,71 @@ def _spans_are_all_supported(phrase: str, nsrc: str, allow_equivalent: bool) -> 
 # 被认成药名——手写清单一定会漏，而漏了不报错，只会让注入负例悄悄变少。
 # 剂型词单独补：`CATEGORY_EXAMPLES` 里几乎都是通用名，不带剂型后缀。
 _DOSAGE_FORMS = ("片", "胶囊", "颗粒", "注射液", "口服液", "软膏", "栓", "滴眼液", "喷雾剂", "丸", "散")
+# 手写那份要**并进来而不是被取代**（`/code-review` 发现）：自动派生会丢掉
+# `醇`/`钾`/`钙`——`CATEGORY_EXAMPLES` 里恰好没有以它们结尾的成员，于是
+# 沙丁胺醇、氯化钾、磷霉素钙等 273 个词表词悄悄不再算药名，没有任何信号。
+# "自动派生"防的是"手写会漏"，不是"手写全错"，两者取并集才对。
+_HANDWRITTEN_SUFFIXES = ("素", "林", "唑", "嗪", "星", "汀", "酯", "胺", "醇", "酮",
+                         "苷", "碱", "钠", "钾", "钙")
 _DRUGLIKE_SUFFIXES = tuple(sorted(
     {n[-1] for v in CATEGORY_EXAMPLES.values() for n in v} | {n[-1] for n in DEFAULT_EXAMPLES}
-    | set(_DOSAGE_FORMS)
+    | set(_DOSAGE_FORMS) | set(_HANDWRITTEN_SUFFIXES)
 ))
 
 
-def _is_druglike(term: str) -> bool:
-    """看起来像药名（末字落在项目自己的药名词汇的末字集合里）。
+# 二字尾缀（他汀/地平/沙坦/霉素…）比单字尾缀特异得多。单靠单字尾缀 + "长的
+# 优先"会把「药物过敏」「高血糖」「骨质疏松」「四肢的骨和关节平片」这类**长的
+# 疾病/短语**排到最前面（`/code-review` #3 实测：holdout 里 8+3+2+… 条）——
+# 敏/糖/松/平 确实都是合法药名尾字（氯苯那敏/阿卡波糖/泼尼松/硝苯地平），
+# 问题不在尾字而在词。二字尾缀优先能把真药名顶上来。
+_DRUGLIKE_BIGRAMS = frozenset(
+    n[-2:] for v in CATEGORY_EXAMPLES.values() for n in v if len(n) >= 2
+) | frozenset(n[-2:] for n in DEFAULT_EXAMPLES if len(n) >= 2)
 
-    这是个**启发式**，不是判定——它只用来在 grounded 注入时优先/限定挑药名，
+
+def _druglike_rank(term: str) -> tuple:
+    """排序键：二字尾缀命中的优先，其次长的优先，最后字典序保证确定性。"""
+    return (term[-2:] not in _DRUGLIKE_BIGRAMS, -len(term), term)
+
+
+# 低特异性单字尾缀：它们确实是合法药名尾字（氯苯那敏/阿卡波糖/泼尼松/
+# 硝苯地平），但同样是大量**疾病/症状/短语**的尾字（药物过敏/高血糖/骨质疏松/
+# 关节平片）。对这些字**必须同时命中二字尾缀**才算药名——只靠单字会让
+# `/code-review` 点名的那批非药实体一路走到注入句里（实测 19/179）。
+# 其余尾字（素/汀/嗪/唑/酯/碱/脲…）是化学词素，单字就够特异。
+_LOW_SPECIFICITY_TAILS = frozenset("敏糖松平定明静油特因灵黑雷兰辛洛尼龙芬啡班胍呤")
+
+
+def _is_druglike(term: str) -> bool:
+    """看起来像药名。
+
+    这是个**启发式**，不是判定——它只用来在 grounded 注入时限定挑药名，
     挑错了最坏结果是少造几条负例或造出一条读着别扭的注入句，不会产生错标
-    （标签由"这个词在不在 source 里"决定，与像不像药无关）。"""
-    return term.endswith(_DRUGLIKE_SUFFIXES)
+    （标签由"这个词在不在 source 里"决定，与像不像药无关）。但读着别扭本身
+    就是可学伪影（"括注里不是药名 ⇒ 负例"），所以宁可严一点、少造一点。"""
+    if term.endswith(_DOSAGE_FORMS):
+        return True
+    if term[-2:] in _DRUGLIKE_BIGRAMS:
+        return True
+    return term.endswith(_DRUGLIKE_SUFFIXES) and term[-1] not in _LOW_SPECIFICITY_TAILS
+
+
+_DRUGLIKE_CACHE: dict[int, tuple[str, ...]] = {}
+
+
+def _druglike_terms(jargon: set[str]) -> tuple[str, ...]:
+    """词表里所有药名形的词，normalize 过、按"长的优先"排好序。
+
+    **必须缓存**（`/code-review` #5）：过滤 + 排序只依赖 `jargon`，但原来写在
+    `build_grounded_injection` 里、每条记录重算一遍——3.95 万条 normalize 两次
+    再对 1.17 万条排序，实测 36ms/记录、1,456 条 train 记录约 52 秒，
+    `--make-candidate-data` 因此从几秒涨到两分钟以上。"""
+    key = id(jargon)
+    if key not in _DRUGLIKE_CACHE:
+        _DRUGLIKE_CACHE[key] = tuple(sorted(
+            (normalize(w) for w in jargon if _is_druglike(normalize(w))),
+            key=_druglike_rank))
+    return _DRUGLIKE_CACHE[key]
 
 
 def build_grounded_injection(record: dict, jargon: set[str], *, max_terms: int = 3) -> list[dict]:
@@ -602,8 +701,7 @@ def build_grounded_injection(record: dict, jargon: set[str], *, max_terms: int =
     # 收紧后 train 513 / holdout 140，配 505/110 条等价形式负例，总量仍超过
     # 合成正例，够用。宁可少造，不要造出下一轮审计要挑的东西。
     picked: list[str] = []
-    for w in sorted((normalize(w) for w in jargon if _is_druglike(normalize(w))),
-                    key=lambda x: (-len(x), x)):
+    for w in _druglike_terms(jargon):
         if len(picked) >= max_terms:
             break
         if w in nsrc and w not in nans and not any(w in p for p in picked):
@@ -626,7 +724,44 @@ def build_grounded_injection(record: dict, jargon: set[str], *, max_terms: int =
     } for term in picked]
 
 
-def build_equivalent_form_injection(record: dict) -> list[dict]:
+def build_grounded_numeric_injection(record: dict, *, holdout: bool = False) -> list[dict]:
+    """注入原文里**确实有**的「数字+单位」，候选是段A 会抽出的裸数字，标 False。
+
+    数字侧的 grounded 注入，与 `build_grounded_injection`（实体侧）同理。
+    加它是为了给**数字类负例补 digit 形供给**：等价形式负例的方向受原文写法
+    支配（说明书几乎全用阿拉伯数字 → 产出的多是 cn 形），单靠它凑不出与正例
+    匹配的 kind 分布，"括注内的 digit 候选几乎都是正例"这条形状捷径就还在。"""
+    src, ans = parse_case_text(record["input"])
+    nsrc, nans = normalize(src), normalize(ans)
+    ans_digits = set(DIGIT_RE.findall(nans))
+    for m in _DIGIT_UNIT_RE.finditer(nsrc):
+        bare, unit = m.group(1), m.group(2)
+        # 裸数字必须不在答案里——否则它本来就是答案的一部分，注入后候选不是
+        # 只出现在括注内，位置特征就没被打平。
+        if bare in ans_digits:
+            continue
+        templates = _split_slot_templates(holdout)
+        if not templates:
+            return []
+        digest = hashlib.sha256(f"gnumneg:{record['case_id']}".encode()).hexdigest()
+        injected = NUMERIC_WRAPPER.format(
+            templates[int(digest, 16) % len(templates)].format(n=f"{bare}{unit}"))
+        if not _spans_are_all_supported(injected, nsrc, allow_equivalent=False):
+            continue
+        return [{
+            "case_id": record["case_id"],
+            "source_case_id": record["case_id"],
+            "source_text": src,
+            "answer": _inject(ans, injected),
+            "candidate_text": bare,
+            "kind": "digit",
+            "red_line_guess": 2,
+            "label": False,
+        }]
+    return []
+
+
+def build_equivalent_form_injection(record: dict, *, holdout: bool = False) -> list[dict]:
     """注入原文某个数字的**等价写法**（原文「3天」→ 注入「三天」），标 False。
 
     候选值相同、只是写法不同，所以它**不是 grounded**（字符串对不上段A的整段
@@ -639,23 +774,62 @@ def build_equivalent_form_injection(record: dict) -> list[dict]:
     src, ans = parse_case_text(record["input"])
     nsrc, nans = normalize(src), normalize(ans)
     src_cn = set(CN_NUMERAL_RE.findall(nsrc))
-    alt = None
-    for m in _DIGIT_UNIT_RE.finditer(nsrc):
-        d, unit = m.group(1), m.group(2)
-        if not d.isdigit() or int(d) not in DIGIT_TO_CN:
-            continue
-        cand = DIGIT_TO_CN[int(d)] + unit
-        # 等价写法不能恰好已经在原文或原答案里出现——那样它就是普通 grounded
-        # 候选，段A 根本不会把它抽出来，造了也进不了生产分布。
-        if cand in src_cn or cand in nsrc or cand in nans:
-            continue
-        alt = cand
-        break
-    if alt is None:
+    src_digits = set(DIGIT_RE.findall(nsrc))
+
+    # **两个方向都要造**（Fable 5 审计 B，SEVERE）。
+    #
+    # 原来只有 digit→cn 一个方向，于是 `alt` 恒为中文数词；而数字类**正例**的
+    # 候选（A3 改动后从注入短语抽 span）大多是阿拉伯数字。结果是"括注内的
+    # digit 候选"100% 是正例——实测 train 137:0、对抗子集 65:0，限定到红线2
+    # 切片这条纯形状特征拿到 **J=0.722**。kind 是候选文本的形状，不需要读
+    # source 就能看出来，等于合取捷径对 digit 候选原样存活。
+    #
+    # 反方向（原文「三天」→ 注入「3天」）把这一格填上。哪个方向可用就用哪个，
+    # 两个都可用时按 case_id 哈希确定性二选一，让两种 kind 都出现在负例里。
+    def _digit_to_cn() -> tuple[str, str] | None:
+        """cn 方向：注入「三天」，段A 的 `CN_NUMERAL_RE` 抽出的也是「三天」
+        （数词+单位整段），所以两者相同。"""
+        for m in _DIGIT_UNIT_RE.finditer(nsrc):
+            d, unit = m.group(1), m.group(2)
+            if int(d) not in DIGIT_TO_CN:
+                continue
+            cand = DIGIT_TO_CN[int(d)] + unit
+            if cand not in src_cn and cand not in nsrc and cand not in nans:
+                return cand, cand
+        return None
+
+    def _cn_to_digit() -> tuple[str, str] | None:
+        """返回 (注入进句子的写法, 段A 会抽出来的候选文本)。
+
+        **两者不是一回事**：注入的是「3天」，但段A 的 `DIGIT_RE` 从答案里抽出来的
+        是**裸数字「3」**。候选文本必须是后者——写成「3天」就跟生产环境段A 永远
+        不会产出的形状对不上，红线2 的验收测的是一个段A 根本不会喂给它的分布
+        （A3 那次修过的同类错误，这里差点原样再犯一遍）。"""
+        for m in _CN_UNIT_RE.finditer(nsrc):
+            c, unit = m.group(1), m.group(2)
+            bare = str(CN_TO_DIGIT[c])
+            written = f"{bare}{unit}"
+            if bare in src_digits or written in nsrc or written in nans:
+                continue
+            return written, bare
+        return None
+
+    forward, backward = _digit_to_cn(), _cn_to_digit()
+    order = (backward, forward) if int(
+        hashlib.sha256(f"eqdir:{record['case_id']}".encode()).hexdigest(), 16
+    ) % 2 else (forward, backward)
+    chosen = next((x for x in order if x is not None), None)
+    if chosen is None:
+        return []
+    written, alt = chosen
+    # 槽位模板按切分取——holdout 的负例只许用 holdout 正例也在用的措辞，
+    # 否则"这个词只出现在负例里"本身就是标签（见 `_split_slot_templates`）。
+    templates = _split_slot_templates(holdout)
+    if not templates:
         return []
     digest = hashlib.sha256(f"eqformneg:{record['case_id']}".encode()).hexdigest()
-    tpl = SLOT_TEMPLATES[int(digest, 16) % len(SLOT_TEMPLATES)]
-    injected = NUMERIC_WRAPPER.format(tpl.format(n=alt))
+    tpl = templates[int(digest, 16) % len(templates)]
+    injected = NUMERIC_WRAPPER.format(tpl.format(n=written))
     if not _spans_are_all_supported(injected, nsrc, allow_equivalent=True):
         return []
     return [{
@@ -664,7 +838,10 @@ def build_equivalent_form_injection(record: dict) -> list[dict]:
         "source_text": src,
         "answer": _inject(ans, injected),
         "candidate_text": alt,
-        "kind": "cn_numeral",
+        # kind 按实际形状定，不能写死 cn_numeral——写死会让 digit 方向的负例
+        # 在探针/验收里被当成中文数词处理，grounding 口径整段匹配 vs 集合匹配
+        # 就用错了尺子。
+        "kind": "digit" if alt[0].isdigit() else "cn_numeral",
         "red_line_guess": 2,
         "label": False,
     }]

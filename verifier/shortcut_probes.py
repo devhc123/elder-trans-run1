@@ -106,6 +106,30 @@ def infer_kind(text: str) -> str:
     return "lexicon"
 
 
+def _assert_kind_matches_shape(pool: list[dict]) -> None:
+    """池里带 `kind` 字段的条目，字段必须与候选文本的实际形状一致。
+
+    **这条断言是踩出来的。** 修 digit 捷径时，注入负例的 `candidate_text` 写成了
+    「3天」，而段A 的 `DIGIT_RE` 从答案里抽出来的是裸数字「3」；存储的 kind 写着
+    `digit`、`infer_kind("3天")` 推断出的是 `lexicon`。探针用字段、临时核查脚本
+    用推断，两边给出不同的数字，**都不报错**——表现成"修复看起来没生效"，
+    真正的问题却是候选形状与生产分布对不上（A3 那轮修过的同类错误）。
+
+    实测：三个生产池 7,000+ 条带 kind 的条目，当前不一致 **0** 条。所以这是在
+    固化一条当下成立的不变量，不是许愿。没有 `kind` 字段的条目（合成正例走的
+    那条路径）不在此列，它们本来就靠推断。"""
+    bad = [it for it in pool
+           if "kind" in it and it["kind"] != infer_kind(it["candidate_text"])]
+    if bad:
+        sample = [(it["candidate_text"], it["kind"], infer_kind(it["candidate_text"]))
+                  for it in bad[:5]]
+        raise ValueError(
+            f"{len(bad)} 条候选的 kind 字段与文本形状不符（候选, 字段, 推断）：{sample}。"
+            f"多半是候选文本写成了段A 不会产出的形状——比如注入「3天」但段A 抽的是"
+            f"裸数字「3」。这会让红线2 的验收测一个生产环境不存在的分布。"
+        )
+
+
 def _parenthetical_start(answer: str) -> int:
     """答案里最早出现的注入括注前缀的位置；没有返回 -1。"""
     idxs = [i for i in (answer.find(p) for p in TEMPLATE_PREFIXES) if i != -1]
@@ -191,6 +215,21 @@ def probe_candidate_kind_is_lexicon(item: dict) -> bool:
     return kind == "lexicon"
 
 
+def probe_candidate_is_digit(item: dict) -> bool:
+    """候选是不是阿拉伯数字形。**Fable 5 审计 B 的直接产物。**
+
+    上一版套件只有 `candidate_kind_is_lexicon`（词表词 vs 其他），对
+    digit / cn_numeral 之间的倾斜完全瞎。而实测那正是当时最强的一条活口：
+    等价形式负例的方向受原文写法支配（说明书几乎全用阿拉伯数字 → 产出的多是
+    中文数词形），数字类**正例**的候选却多是阿拉伯数字形——于是"括注内是不是
+    digit"在红线2 切片上拿到 **J = 0.722**，完全不用读原文。
+
+    加它是为了让同一个疏忽下次立刻显形：kind 是候选文本的形状，模型不需要
+    任何理解就能看见。"""
+    kind = item.get("kind") or infer_kind(item["candidate_text"])
+    return kind == "digit"
+
+
 PROBES: tuple[tuple[str, object], ...] = (
     ("template_prefix_present", probe_template_prefix_present),
     ("candidate_in_parenthetical", probe_candidate_in_parenthetical),
@@ -199,6 +238,7 @@ PROBES: tuple[tuple[str, object], ...] = (
     ("candidate_not_grounded", probe_candidate_not_grounded),
     ("conjunction_in_paren_and_not_grounded", probe_conjunction_in_paren_and_not_grounded),
     ("candidate_kind_is_lexicon", probe_candidate_kind_is_lexicon),
+    ("candidate_is_digit", probe_candidate_is_digit),
 )
 
 STRUCTURE_PROBES = (
@@ -212,6 +252,7 @@ REPORT_ONLY_PROBES = (
     "candidate_not_grounded",
     "conjunction_in_paren_and_not_grounded",
     "candidate_kind_is_lexicon",
+    "candidate_is_digit",
 )
 
 # **同时读两侧输入的探针，永不移除**（L5 / Feng et al. arXiv:1905.05778）。
@@ -259,6 +300,7 @@ def score_pool(pool: list[dict]) -> dict[str, ProbeScore]:
             "候选池是空的——探针在空池上会全部报 J=0，看起来像「没有捷径」。"
             "先确认池文件是不是没重建/被截断。"
         )
+    _assert_kind_matches_shape(pool)
     out: dict[str, ProbeScore] = {}
     for name, fn in PROBES:
         tp = fp = fneg = tn = 0

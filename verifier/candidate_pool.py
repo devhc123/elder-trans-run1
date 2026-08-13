@@ -106,6 +106,8 @@ def build_uncertain_candidate_pool(records: list[dict], jargon: set[str]) -> lis
 def build_injection_negatives(
     records: list[dict], jargon: set[str], *,
     max_entity: int | None = None, max_equivalent: int | None = None,
+    numeric_kind_targets: dict[str, int] | None = None,
+    holdout: bool = False,
 ) -> list[dict]:
     """两类**注入负例**：与合成正例同模板、同插入位置、同措辞，只有内容不同。
 
@@ -122,11 +124,17 @@ def build_injection_negatives(
     **两类分别设上限**：等价形式全是数字类、实体全是词表类，用一个总数上限截断
     会让 kind 分布随机倾斜（ticket 17 的探针⑦ 盯的就是这个）。
 
+    `holdout` 必须跟调用方所在的切分一致：等价形式的句子模板是按切分分的
+    （见 `synth_minimal_edit._split_slot_templates`），传错会让某个池子里的
+    负例带上**只有另一个切分的正例才会用**的措辞，"见到这句话就是负例"直接
+    成立。`/code-review` 实测过传丢的后果：holdout 52/261、train 259/499。
+
     只对 `verdict=pass` 的案例生效——fail 答案里本来就有真违规，再叠注入会让
     标签失去意义。按 case_id 排序遍历，确定性、不随机。"""
     from verifier.synth_minimal_edit import (
         build_equivalent_form_injection,
         build_grounded_injection,
+        build_grounded_numeric_injection,
     )
 
     entity: list[dict] = []
@@ -137,14 +145,25 @@ def build_injection_negatives(
         if max_entity is None or len(entity) < max_entity:
             for c in build_grounded_injection(r, jargon):
                 entity.append({**c, "case_id": f"{r['case_id']}{STRUCTURAL_NEGATIVE_SUFFIX}"})
-        if max_equivalent is None or len(equivalent) < max_equivalent:
-            for c in build_equivalent_form_injection(r):
-                equivalent.append({**c, "case_id": f"{r['case_id']}{EQUIVALENT_FORM_SUFFIX}"})
+        for c in (build_equivalent_form_injection(r, holdout=holdout)
+                  or build_grounded_numeric_injection(r, holdout=holdout)):
+            equivalent.append({**c, "case_id": f"{r['case_id']}{EQUIVALENT_FORM_SUFFIX}"})
     # 硬截断：内层循环一次可能追加多个候选，卡在差 1 条时会整条超发
     # （`/code-review` 在上一版抓到过同款 bug，这里保留同样的防线）。
     if max_entity is not None:
         entity = entity[:max_entity]
-    if max_equivalent is not None:
+    if numeric_kind_targets is not None:
+        # **按 kind 配额取，不是取前 N 条**（Fable 5 审计 B 的完整修复）。
+        # 数字类负例的 kind 分布受原文写法支配（说明书几乎全用阿拉伯数字 →
+        # 等价形式多产 cn 形），而数字类**正例**的候选多是 digit 形。只按总数
+        # 截断会留下"括注内的 digit 候选几乎都是正例"这条纯形状捷径——实测
+        # 红线2 切片 J=0.722。这里按正例的 kind 比例取，取不满就少取，
+        # **宁可负例少几条，也不要 kind 分布倾斜**。
+        picked: list[dict] = []
+        for k, quota in numeric_kind_targets.items():
+            picked += [c for c in equivalent if c["kind"] == k][:quota]
+        equivalent = picked
+    elif max_equivalent is not None:
         equivalent = equivalent[:max_equivalent]
     return entity + equivalent
 
