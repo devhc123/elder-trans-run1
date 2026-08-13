@@ -18,7 +18,8 @@
 
 **Blocked by:** 07（测试集冻结）、02（可读性打分器）
 
-**Status:** done（判官覆盖 200/270，见下方披露）— `metrics/run_eval.py`
+**Status:** done（判官覆盖 270/270 全集，guard_faithfulness 最终 72.6%/196/270，
+见追加十末尾"十二场景排查总结"）— `metrics/run_eval.py`
 
 - [x] 判官 prompt 固化成文件，rubric 骨架继承自 EQbench 三维
 - [x] 270 题分片并发跑通，单次全量跑完在可接受时长内
