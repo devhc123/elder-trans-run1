@@ -16,6 +16,11 @@
 
   - **红线0（实体）与红线2（数字）分开报，不合并**（L4 判读规则）
   - **合成池 vs 真实池漏报率差 >10pp 判「学到伪影」**（L1 判读规则）
+
+**这个"真实池"是 silver-ref，不是 gold。** 它的标签全部由教师（Claude）按
+`verifier/TEACHER_TASK.md` 的 rubric 判出，无一条人工权威标注。所以本脚本报出的
+"漏报 ≤5% 通过"，严格说是"**与本项目 rubric 一致**"，不是"对"。终局结论仍缺一个
+gold（定义与理由见 `DISCIPLINE.md` D1.2b）。报告里已按此标注，不要在别处把它写成 gold。
   - **同答案内区分度**：只看同时含正负例候选的答案——这是 ticket 14 问题二那轮
     修复（教师直接判定不确定候选）的**唯一**直接验收口径。没有这个切片，
     "模型是真的逐候选判断，还是只是把整条答案的坏印象传染给所有候选"这个问题
@@ -379,7 +384,7 @@ def _print_readout(passed: bool, miss_ok: bool, gap: float, gap_ok: bool,
 
 
 def report(real: dict, adv: dict | None) -> bool:
-    for m, title in ((real, "真实 holdout 候选池"), (adv, "对抗子集")):
+    for m, title in ((real, "真实 holdout 候选池（silver-ref）"), (adv, "对抗子集")):
         if m is None:
             continue
         frac = len(m["missing"]) / m["n_pool"] if m["n_pool"] else 0
@@ -390,7 +395,7 @@ def report(real: dict, adv: dict | None) -> bool:
                   f"排除在外又会让漏报率虚低。先补齐预测再评。")
             return False
 
-    _print_split(real, "真实 holdout 候选池")
+    _print_split(real, "真实 holdout 候选池（silver-ref）")
     _print_mixed(real)
     if adv is not None:
         _print_split(adv, "对抗子集")
