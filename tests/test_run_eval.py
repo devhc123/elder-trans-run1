@@ -368,6 +368,28 @@ def test_guard_faithfulness_write_is_a_noop_when_no_judged_rows(tmp_path):
     assert kpi.read_text(encoding="utf-8") == before
 
 
+def test_guard_faithfulness_write_is_idempotent_on_rerun(tmp_path):
+    """回归：判官数据改变后（比如重判翻正/翻负）必须能重跑覆盖旧数字，
+    不能因为 actual 已经不是 null 就静默不写——这是 live-003 复核实测踩的坑：
+    第一次跑填了 0.7259，后来 45 题被复核翻负，重跑却因为字面匹配
+    `actual: null` 失败而完全没更新，kpi.yaml 里留着过期数字。"""
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_guard_faithfulness_actual(_fake_jrows(n_pass=7, n_fail=3), kpi_path=kpi)
+    first = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    gf1 = next(m for m in first["metrics"] if m["id"] == "guard_faithfulness")
+    assert gf1["actual"] == round(7 / 10, 4)
+
+    # 判官数据变了：这次只有 2/10 通过
+    write_guard_faithfulness_actual(_fake_jrows(n_pass=2, n_fail=8), kpi_path=kpi)
+    second = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    gf2 = next(m for m in second["metrics"] if m["id"] == "guard_faithfulness")
+    assert gf2["actual"] == round(2 / 10, 4), "重跑没能覆盖旧数字——静默 no-op 的回归"
+
+
 # ---------- write_kpi1_macro_by_scenario：12 场景可读性宏平均，此前只印到
 # aggregate() 的 stdout，从没写成 kpi.yaml 里的结构化数据。
 

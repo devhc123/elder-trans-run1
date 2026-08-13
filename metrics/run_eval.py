@@ -434,6 +434,11 @@ def write_guard_faithfulness_actual(jrows: list[dict], kpi_path: Path = KPI) -> 
     只在 `id: guard_faithfulness` 这一段范围内替换（该段是 metrics 列表最后
     一项，以下一个空行为界），避免全局字符串替换误伤 kpi1/kpi2 同名的
     `actual: null`。尚无判官结果（jrows 为空）时不写——不能拿空数据编个假数字。
+
+    用正则按行替换而不是匹配字面 `actual: null`——否则第二次跑（判官数据
+    变了，比如重判翻正/翻负）会因为 `actual` 已经不是 null 而静默 no-op，
+    kpi.yaml 里留着过期数字却不报错。`live-003` 复核 45 题翻负时实测踩过
+    这个坑。
     """
     if not jrows:
         return
@@ -451,9 +456,9 @@ def write_guard_faithfulness_actual(jrows: list[dict], kpi_path: Path = KPI) -> 
         end = len(text)
     block = text[start:end]
 
-    block = block.replace(
-        "    actual: null\n    ci95: null",
-        f"    actual: {rate}\n    ci95: [{round(lo,4)}, {round(hi,4)}]",
+    block = re.sub(r"    actual: .+", f"    actual: {rate}", block, count=1)
+    block = re.sub(
+        r"    ci95: .+", f"    ci95: [{round(lo,4)}, {round(hi,4)}]", block, count=1
     )
 
     text = text[:start] + block + text[end:]

@@ -80,8 +80,8 @@ metrics:
       防止可读性靠歪曲或删减原文换取。
     judge: Claude Sonnet 5（session subagent；异厂解耦，判官厂商 != 被测厂商）
     reproducibility: 可审计不可复现 —— 逐条留痕 judge_runs/<run_id>.jsonl
-    actual: 0.7259
-    ci95: [0.6698, 0.7757]
+    actual: 0.5593
+    ci95: [0.4996, 0.6172]
 
 # --- 被测系统 -----------------------------------------------------------
 system_under_test:
@@ -128,6 +128,20 @@ caveats:
       历史误判，独立验证后证实原判是对的（内容不准确/证据不足），每一条都
       必须过外部核实，不能凭直觉放行。同一套方法论已整理进
       `agent-experiment-discipline` skill §⑧（disciplines.md 纪律 49–52）。
+  - 双向复核（修正上条的单向偏差）: >
+      上条"历史判定修正"只查了"原判违规→是否该翻正"一个方向——这正是
+      `docs/JUDGE_AUDIT.md` 自己预警过的偏差："只重判违规子集会把'原判通过→
+      该新增违规'那一半漏掉，得到一个只降不升的、有偏的新违规率"。2026-08-13
+      对当时 196 题"通过"集做了系统性反向复核：14 个 subagent 盲判（不知道
+      这些题此前判过、往哪个方向判过），命中 48 个翻转候选；全部 48 个逐条过
+      DeepSeek 独立复核，45 个确认成立（多数是漏检的 A 级编造——具体数字/
+      操作指令/条件篡改/软化分级，命中方式与上条完全相同，只是这次是在
+      "通过"集里找，不是在"违规"集里找），3 个 DeepSeek 明确反驳且反驳后
+      没有独立成立的替代理由，维持原判通过（日常照护-017、运动与养生-014、
+      饮食营养-024）。**guard_faithfulness 72.6%（196/270）→ 55.9%（151/270），
+      CI [50.0%, 61.7%]。** 这个数字比上条的 72.6% 更可信，因为它是两个方向
+      都查过的；72.6% 只查了一个方向，结构性偏高。方法与逐题清单见 ticket 08
+      追加十一。
 
 # --- frozen by validate_testset.py --freeze ---
 dataset_sha256: 80b52c6582aa0d958b117e794f46ffddeade90b97cd6c725802b1f3e32416594
@@ -144,5 +158,5 @@ kpi1_ci95: [0.9475, 0.9874]
 kpi1_net_gain: 0.0903
 kpi1_on_headroom_subset: 0.9451
 kpi1_hard_subset: 0.9527
-guard_faithfulness: 0.7259
+guard_faithfulness: 0.5593
 judge_note: Claude Sonnet 5 session subagent；可审计不可复现，留痕见 runs/live-003/
