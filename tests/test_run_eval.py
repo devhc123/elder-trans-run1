@@ -299,6 +299,27 @@ def test_kpi1_actual_net_gain_is_untouched():
     assert "actual_net_gain" not in src, "write_kpi1_actual 不该碰 actual_net_gain"
 
 
+def test_kpi1_actual_write_is_idempotent_on_rerun(tmp_path):
+    """回归：与 write_guard_faithfulness_actual 同源的 bug——原实现字面匹配
+    `actual: null`，第一次跑之后这些字段就不再是 null，重跑会静默 no-op。"""
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_kpi1_actual(_fake_rows(n_pass=9, n_fail=1), kpi_path=kpi)  # 17 题, 14/17 通过
+    first = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    k1_first = next(m for m in first["metrics"] if m["id"] == "kpi1_readability")
+    assert k1_first["actual"] == round(14 / 17, 4)
+
+    # 数据变了：这次全部通过
+    write_kpi1_actual(_fake_rows(n_pass=17, n_fail=0, headroom_pass=0, headroom_fail=0, hard_pass=0, hard_fail=0), kpi_path=kpi)
+    second = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    k1_second = next(m for m in second["metrics"] if m["id"] == "kpi1_readability")
+    assert k1_second["actual"] == 1.0, "重跑没能覆盖旧数字——静默 no-op 的回归"
+    assert k1_second["verdict"] == "达标"
+
+
 # ---------- write_guard_faithfulness_actual：同样的历史缺口——_write_kpi
 # 只把这个数字写进文末扁平区块（`guard_faithfulness: 0.7259`），从没写进
 # metrics[] 里 schema 真正指向的 actual/ci95。
@@ -449,3 +470,24 @@ def test_kpi1_macro_by_scenario_is_a_noop_when_no_rows(tmp_path):
     write_kpi1_macro_by_scenario([], kpi_path=kpi)
 
     assert kpi.read_text(encoding="utf-8") == before
+
+
+def test_kpi1_macro_by_scenario_write_is_idempotent_on_rerun(tmp_path):
+    """回归：与另外两个 write_* 同源的 bug——第一次写完是多行 list，不再是
+    字面 `null` 单行，重跑必须仍能替换掉，而不是静默 no-op。"""
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_kpi1_macro_by_scenario(_fake_macro_rows(), kpi_path=kpi)
+    first = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    macro_first = next(m for m in first["metrics"] if m["id"] == "kpi1_readability")["actual_macro_by_scenario"]
+    assert {row["scenario"] for row in macro_first} == {"用药咨询", "日常照护"}
+
+    # 场景数据变了：换成一个新场景
+    new_rows = [{"scenario": "运动与养生", "strict": 0.88, "net_gain": 0.03}]
+    write_kpi1_macro_by_scenario(new_rows, kpi_path=kpi)
+    second = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    macro_second = next(m for m in second["metrics"] if m["id"] == "kpi1_readability")["actual_macro_by_scenario"]
+    assert {row["scenario"] for row in macro_second} == {"运动与养生"}, "重跑没能覆盖旧数据——静默 no-op 的回归"

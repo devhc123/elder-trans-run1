@@ -391,6 +391,12 @@ def write_kpi1_actual(rows: list[dict], kpi_path: Path = KPI) -> None:
     只在 `id: kpi1_readability` 这一段文本范围内做替换，不做整份 YAML
     反序列化重写（会吃掉注释），也不做全局字符串替换（`actual: null` /
     `ci95: null` 在 guard_faithfulness 那段也出现，全局替换会误伤）。
+
+    用正则按行替换而不是匹配字面 `null`——否则数据变化后重跑（比如 kpi1
+    输入的测试集变了）会因为这些字段已经不是 null 而静默 no-op。
+    `write_guard_faithfulness_actual` 曾经踩过这个坑，`live-003` 双向复核
+    时实测过（见 ticket 08 追加十一），这里照同样方式修，避免同一个 bug
+    在姊妹函数里留一份。
     """
     ok, n, pass_rate = _pass_rate(rows)
     lo, hi = wilson(ok, n)
@@ -409,18 +415,23 @@ def write_kpi1_actual(rows: list[dict], kpi_path: Path = KPI) -> None:
         return
     block = text[start:end]
 
-    block = block.replace("    actual: null\n    actual_hard_subset: null\n",
-                           f"    actual: {pass_rate}\n"
-                           f"    actual_hard_subset: {hard_rate}\n")
-    block = block.replace(
-        "    actual_on_headroom_subset: null  # 原文未达标的 187 题上的达标率——达标率本身还没算过\n",
-        f"    actual_on_headroom_subset: {head_rate}  # 原文未达标子集上的达标率\n",
+    block = re.sub(r"^    actual: .*$", f"    actual: {pass_rate}", block, count=1, flags=re.MULTILINE)
+    block = re.sub(
+        r"^    actual_hard_subset: .*$",
+        f"    actual_hard_subset: {hard_rate}",
+        block, count=1, flags=re.MULTILINE,
     )
-    block = block.replace(
-        "    ci95: null\n    verdict: 达标  # 0.9518（均值）与 0.9741（达标率）两种读法都 ≥ target 0.90\n",
-        f"    ci95: [{round(lo,4)}, {round(hi,4)}]\n"
-        f"    verdict: {verdict}\n",
+    block = re.sub(
+        r"^    actual_on_headroom_subset: .*$",
+        f"    actual_on_headroom_subset: {head_rate}  # 原文未达标子集上的达标率",
+        block, count=1, flags=re.MULTILINE,
     )
+    block = re.sub(
+        r"^    ci95: .*$",
+        f"    ci95: [{round(lo,4)}, {round(hi,4)}]",
+        block, count=1, flags=re.MULTILINE,
+    )
+    block = re.sub(r"^    verdict: .*$", f"    verdict: {verdict}", block, count=1, flags=re.MULTILINE)
 
     text = text[:start] + block + text[end:]
     kpi_path.write_text(text, encoding="utf-8")
@@ -471,9 +482,15 @@ def write_kpi1_macro_by_scenario(rows: list[dict], kpi_path: Path = KPI) -> None
     数据。宏平均口径：先按场景分组各自取 strict 均值，再看 12 个场景值本身
     （不是把全部词拉平算微平均，那是 kpi1_strict_mean 的口径，两者不能混）。
 
-    只替换 `actual_macro_by_scenario: null` 这一行，且限定在 kpi1_readability
-    段内（同 write_kpi1_actual 的定位方式），不做整份 YAML 反序列化重写。
+    只替换 `actual_macro_by_scenario` 这一字段（无论它现在是没填过的
+    `null` 单行，还是已经填过的多行列表），且限定在 kpi1_readability 段内
+    （同 write_kpi1_actual 的定位方式），不做整份 YAML 反序列化重写。
     rows 为空（尚无跑数）时不写。
+
+    用正则匹配字段名而不是字面 `null` 单行——否则场景数据变了以后重跑
+    （比如 12 场景增补成 13 场景），会因为这个字段已经是多行列表、不再
+    匹配"单行 null"的字面文本而静默 no-op。写法与 write_kpi1_actual 的
+    idempotency 修复同源，见 ticket 08 追加十一。
     """
     if not rows:
         return
@@ -494,7 +511,7 @@ def write_kpi1_macro_by_scenario(rows: list[dict], kpi_path: Path = KPI) -> None
             f"strict_mean: {mean(x['strict'] for x in v)}, "
             f"net_gain: {mean(x['net_gain'] for x in v)}}}"
         )
-    new_block = "    actual_macro_by_scenario:\n" + "\n".join(entry_lines) + "\n"
+    new_block = "    actual_macro_by_scenario:\n" + "\n".join(entry_lines)
 
     text = kpi_path.read_text(encoding="utf-8")
     start = text.find("  - id: kpi1_readability")
@@ -505,10 +522,13 @@ def write_kpi1_macro_by_scenario(rows: list[dict], kpi_path: Path = KPI) -> None
         return
     block = text[start:end]
 
-    old_line = "    actual_macro_by_scenario: null   # 12 场景表，还没写成结构化数据（目前只印到 stdout）\n"
-    if old_line not in block:
+    # 非贪婪匹配到下一个「4 空格缩进 + 非空白」的同级字段行之前，这样既能
+    # 吃掉单行 null 形态，也能吃掉多行 list 形态（其条目是 6 空格缩进，
+    # 不会被 lookahead 误判成下一个字段）。
+    pattern = re.compile(r"^    actual_macro_by_scenario:.*?(?=\n    \S)", re.DOTALL | re.MULTILINE)
+    if not pattern.search(block):
         return
-    block = block.replace(old_line, new_block)
+    block = pattern.sub(lambda m: new_block, block, count=1)
 
     text = text[:start] + block + text[end:]
     kpi_path.write_text(text, encoding="utf-8")
