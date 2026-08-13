@@ -32,6 +32,8 @@ from verifier.build_teacher_labels import CONDITIONAL_MARKERS as _ALL_CONDITIONA
 from verifier.redline_candidates import (  # noqa: E402
     CN_NUMERAL_RE,
     DIGIT_RE,
+    FRACTION_RE,
+    _UNIT_ALT,
     normalize,
     parse_case_text,
 )
@@ -136,6 +138,65 @@ NUMERIC_INJECTIONS = [
     "建议连服5天后复诊",
     "一般每次用量不超过2片",
 ]
+
+
+# ---------- 注入负例（ticket 24）：与正例同模板、同位置，只有内容不同 ----------
+#
+# 问题③的修复。合成正例统一是"答案末尾追加一句括注"，于是"候选在不在括注里"
+# 这个纯位置特征就能把正负例完全分开（实测：对抗子集 J=1.000）。这里造两类
+# **同样带括注、同样在末尾、但标 False** 的负例，让位置特征不再携带标签信息：
+#
+#   a) grounded 注入：注入 source_text 里**确实有**、且不在原 answer 里的实体
+#   b) 等价形式注入：原文写「3天」，注入句里写「三天」——候选值相同、写法不同，
+#      **不是** grounded（字符串对不上）却**有依据**。这是唯一能压住
+#      「在括注内 ∧ 非grounded」这个合取捷径的那一格（见 shortcut_probes 模块注释）。
+#
+# 两类都**复用正例的模板与插入位置**，一个字都不新造——措辞一分叉，负例就又能
+# 被措辞特征认出来，等于把捷径从"位置"挪到"用词"。上一轮零候选安慰语就是这么
+# 失败的：它只共享了前缀。
+
+# 数字↔中文数词的等价映射。只覆盖 1-10：更大的数在中文里写法分歧多
+# （"十二"/"12"/"一二"），等价关系不再干净，宁可少造几条也不要造出错标。
+DIGIT_TO_CN: dict[int, str] = {
+    1: "一", 2: "两", 3: "三", 4: "四", 5: "五",
+    6: "六", 7: "七", 8: "八", 9: "九", 10: "十",
+}
+_DIGIT_UNIT_RE = re.compile(rf"(\d+)({_UNIT_ALT})")
+
+
+def _numeric_spans(text: str) -> list[str]:
+    return DIGIT_RE.findall(text) + CN_NUMERAL_RE.findall(text) + FRACTION_RE.findall(text)
+
+
+def _derive_slot_templates() -> tuple[str, ...]:
+    """从 `NUMERIC_INJECTIONS` 里**自动派生**出带槽位的模板，供注入负例复用。
+
+    只取"恰好含一个数字 span、且后面紧跟一个单位词"的那几条，把「数字+单位」
+    整段换成 `{n}` 槽——槽位吞掉单位，填进去的等价形式自带单位，任何单位都能用。
+
+    **自动派生而不是手写第二套措辞**：负例和正例用的是同一批句子，措辞本身就
+    不携带标签信息；而且以后改 `NUMERIC_INJECTIONS` 时这里自动跟着变，不会出现
+    "改了正例忘了改负例"的漂移。"""
+    out: list[str] = []
+    for phrase in NUMERIC_INJECTIONS:
+        spans = _numeric_spans(phrase)
+        if len(spans) != 1 or not spans[0].isdigit():
+            continue
+        i = phrase.index(spans[0])
+        rest = phrase[i + len(spans[0]):]
+        m = re.match(rf"({_UNIT_ALT})", rest)
+        if m:
+            out.append(phrase[:i] + "{n}" + rest[m.end():])
+    return tuple(out)
+
+
+SLOT_TEMPLATES = _derive_slot_templates()
+assert SLOT_TEMPLATES, "没能从 NUMERIC_INJECTIONS 派生出任何带槽模板——注入负例会整批消失"
+
+NUMERIC_WRAPPER = "（补充一句：{}。）"
+assert NUMERIC_WRAPPER.format("x").startswith(TEMPLATE_PREFIXES), (
+    "数字类注入的括注前缀必须与实体类共用同一批前缀"
+)
 
 
 _MARKER_RE_CACHE: dict[tuple[str, ...], re.Pattern] = {}
@@ -441,6 +502,153 @@ def synthetic_records_to_candidates(synth_records: list[dict]) -> list[dict]:
                 "label": True,
             })
     return out
+
+
+def _inject(answer: str, phrase: str) -> str:
+    """把注入句追加到答案末尾。**与正例逐字节同一个动作**——正例走的是
+    `answer.rstrip() + "\\n\\n" + injected`，负例必须一模一样，位置差一个字符
+    都会让"插入位置"重新变成可学特征。"""
+    return answer.rstrip() + "\n\n" + phrase
+
+
+def _spans_are_all_supported(phrase: str, nsrc: str, allow_equivalent: bool) -> bool:
+    """注入句里出现的**每一个** digit/cn_numeral/fraction span 是不是都有依据。
+
+    **这是注入负例最要紧的一条不变量。** 少了它，会在一个标 False 的答案里塞进
+    一个真的编造数字——那不是"负例质量差"，是**货真价实的错标**，而且没有任何
+    信号：训练照跑，验收照过，只有模型学歪。所以宁可整条跳过也不放行。
+
+    `allow_equivalent=True` 时，等价形式（原文「3天」↔ 注入「三天」）也算有依据；
+    这正是等价形式负例的立身之本，但**只对它开**，grounded 注入不许走这条路。"""
+    src_digits = set(DIGIT_RE.findall(nsrc))
+    src_cn = set(CN_NUMERAL_RE.findall(nsrc))
+    src_frac = set(FRACTION_RE.findall(nsrc))
+    equivalents = set()
+    if allow_equivalent:
+        for m in _DIGIT_UNIT_RE.finditer(nsrc):
+            d, unit = m.group(1), m.group(2)
+            if d.isdigit() and int(d) in DIGIT_TO_CN:
+                equivalents.add(DIGIT_TO_CN[int(d)] + unit)
+    for span in DIGIT_RE.findall(phrase):
+        if span not in src_digits:
+            return False
+    for span in CN_NUMERAL_RE.findall(phrase):
+        if span not in src_cn and span not in equivalents:
+            return False
+    for span in FRACTION_RE.findall(phrase):
+        if span not in src_frac:
+            return False
+    return True
+
+
+# 药名尾缀，用来在 grounded 注入时**优先挑药名**。
+#
+# 为什么需要：正例的三个模板全是"像{X}这类药"的框架（注入的本来就是药名）。
+# 如果负例往同一个框架里塞"慢性支气管炎急性发作""清淡饮食"这类 source 里
+# 确实有、但不是药的实体，① 读起来不通，② 更要命的是造出一个新的可学特征
+# ——"括注里不是药名 ⇒ 负例"。措辞对齐了、内容却没对齐，等于把捷径从用词
+# 挪到语义类别。
+#
+# 这批尾缀是从 `CATEGORY_EXAMPLES` 里实际出现的药名归纳的，不是凭空列的。
+# 它只用来**排序**（药名优先），挑不到药名时仍会兜底用普通 grounded 实体
+# ——兜底比例会被 CLI 报出来，好让审计判断这条启发式够不够。
+_DRUGLIKE_SUFFIXES = (
+    "素", "林", "唑", "嗪", "星", "汀", "酯", "胺", "醇", "酮", "苷", "碱", "钠", "钾", "钙",
+    "片", "胶囊", "颗粒", "注射液", "口服液", "软膏", "栓", "滴眼液", "喷雾剂",
+)
+
+
+def _is_druglike(term: str) -> bool:
+    return term.endswith(_DRUGLIKE_SUFFIXES)
+
+
+def build_grounded_injection(record: dict, jargon: set[str], *, max_terms: int = 3) -> list[dict]:
+    """注入 source_text 里**确实有**、且不在原 answer 里的实体，标 False。
+
+    用与正例完全相同的 `TEMPLATES` 和插入位置——差别只在注入内容 grounded 与否。
+    这样"答案里有括注""候选落在括注内""候选在末 15%"这几个纯结构特征在正负例
+    里都出现，不再携带标签信息。
+
+    只对 `verdict=pass` 的案例调用（调用方保证）。候选**只有注入词本身**：
+    答案原有的候选由 `build_trusted_candidate_pool` 负责，这里不重复抽。"""
+    src, ans = parse_case_text(record["input"])
+    nsrc, nans = normalize(src), normalize(ans)
+    # **只挑药名形的实体，挑不到就整条跳过。**
+    #
+    # 实测过放宽的版本：不限药名时 train 能产 3,149 条，但其中只有 16% 是药名，
+    # 其余是"慢性支气管炎急性发作""清淡饮食"这类 source 里确实有、却不是药的
+    # 实体。塞进"像X这类药"的框架里既读不通，更要命的是造出一个新的可学特征
+    # ——"括注里不是药名 ⇒ 负例"。措辞跟正例对齐了、内容类别却没对齐，等于把
+    # 捷径从用词挪到语义类别，跟上一轮零候选安慰语犯的是同一个错。
+    # 收紧后 train 513 / holdout 140，配 505/110 条等价形式负例，总量仍超过
+    # 合成正例，够用。宁可少造，不要造出下一轮审计要挑的东西。
+    picked: list[str] = []
+    for w in sorted((normalize(w) for w in jargon if _is_druglike(normalize(w))),
+                    key=lambda x: (-len(x), x)):
+        if len(picked) >= max_terms:
+            break
+        if w in nsrc and w not in nans and not any(w in p for p in picked):
+            picked.append(w)
+    if not picked:
+        return []
+    injected = _template_for(f"groundedneg:{record['case_id']}").format(names="、".join(picked))
+    if not _spans_are_all_supported(injected, nsrc, allow_equivalent=False):
+        return []
+    answer = _inject(ans, injected)
+    return [{
+        "case_id": record["case_id"],
+        "source_case_id": record["case_id"],
+        "source_text": src,
+        "answer": answer,
+        "candidate_text": term,
+        "kind": "lexicon",
+        "red_line_guess": 0,
+        "label": False,
+    } for term in picked]
+
+
+def build_equivalent_form_injection(record: dict) -> list[dict]:
+    """注入原文某个数字的**等价写法**（原文「3天」→ 注入「三天」），标 False。
+
+    候选值相同、只是写法不同，所以它**不是 grounded**（字符串对不上段A的整段
+    匹配）却**有依据**——这是「在括注内 ∧ 非grounded」这个合取捷径唯一被填上的
+    那一格（见 `shortcut_probes` 模块注释：其余三格都能用规则造，这一格造不出来，
+    只能靠这种保真改写）。它同时也是真实池里最常见的难负例形态：教模型
+    grounding 是语义不是字符串匹配。
+
+    句子模板从正例短语自动派生（`SLOT_TEMPLATES`），一个字都不新造。"""
+    src, ans = parse_case_text(record["input"])
+    nsrc, nans = normalize(src), normalize(ans)
+    src_cn = set(CN_NUMERAL_RE.findall(nsrc))
+    alt = None
+    for m in _DIGIT_UNIT_RE.finditer(nsrc):
+        d, unit = m.group(1), m.group(2)
+        if not d.isdigit() or int(d) not in DIGIT_TO_CN:
+            continue
+        cand = DIGIT_TO_CN[int(d)] + unit
+        # 等价写法不能恰好已经在原文或原答案里出现——那样它就是普通 grounded
+        # 候选，段A 根本不会把它抽出来，造了也进不了生产分布。
+        if cand in src_cn or cand in nsrc or cand in nans:
+            continue
+        alt = cand
+        break
+    if alt is None:
+        return []
+    digest = hashlib.sha256(f"eqformneg:{record['case_id']}".encode()).hexdigest()
+    tpl = SLOT_TEMPLATES[int(digest, 16) % len(SLOT_TEMPLATES)]
+    injected = NUMERIC_WRAPPER.format(tpl.format(n=alt))
+    if not _spans_are_all_supported(injected, nsrc, allow_equivalent=True):
+        return []
+    return [{
+        "case_id": record["case_id"],
+        "source_case_id": record["case_id"],
+        "source_text": src,
+        "answer": _inject(ans, injected),
+        "candidate_text": alt,
+        "kind": "cn_numeral",
+        "red_line_guess": 2,
+        "label": False,
+    }]
 
 
 def main() -> int:

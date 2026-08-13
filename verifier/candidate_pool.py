@@ -187,7 +187,10 @@ def build_structural_negatives(
     return out
 
 
-def sample_uncertain_candidates(pool: list[dict], n: int, prefix: str) -> list[dict]:
+def sample_uncertain_candidates(
+    pool: list[dict], n: int | None, prefix: str,
+    exclude: set[tuple[str, str]] | None = None,
+) -> list[dict]:
     """从 `build_uncertain_candidate_pool` 的输出里确定性抽样 n 条并分配
     `id`（供派发教师标注、之后回填给 `apply_teacher_labels` 用）。
 
@@ -198,12 +201,23 @@ def sample_uncertain_candidates(pool: list[dict], n: int, prefix: str) -> list[d
     {train,holdout}.jsonl`，不需要也不应该重新生成）。
 
     按 `(case_id, candidate_text)` 的哈希排序取前 n 条——确定性、不随机，
-    重跑同一个 pool 拿到同一批候选和同一批 id，超过 pool 大小就取全部。"""
+    重跑同一个 pool 拿到同一批候选和同一批 id，超过 pool 大小就取全部。
+    `n=None` 表示"剩下的全要"（ticket 23 的 train 侧是全量补标，不是抽样）。
+
+    `exclude`：已经标注过的 `(case_id, candidate_text)` 集合。**必须按内容键排除，
+    不能按名次排除**——历史上那 250 条是一次性脚本抽的、脚本没入库，它的名次顺序
+    无从复现，"跳过前 100 名"会跳错人（既可能重复派发已标过的，也可能永远漏掉
+    某些条目）。内容键是唯一稳的锚。
+
+    `prefix` 换一批要换一个——`apply_teacher_labels` 的 judgments 是按 id 查的，
+    两批 id 撞了会张冠李戴，且不会报错。"""
+    exclude = exclude or set()
     ranked = sorted(
-        pool,
+        (it for it in pool if (it["case_id"], it["candidate_text"]) not in exclude),
         key=lambda it: hashlib.sha256(f"sample:{it['case_id']}:{it['candidate_text']}".encode()).hexdigest(),
     )
-    return [{**item, "id": f"{prefix}-{i:03d}"} for i, item in enumerate(ranked[:n])]
+    chosen = ranked if n is None else ranked[:n]
+    return [{**item, "id": f"{prefix}-{i:03d}"} for i, item in enumerate(chosen)]
 
 
 def apply_teacher_labels(sampled_uncertain: list[dict], judgments: dict[str, bool]) -> list[dict]:
@@ -250,17 +264,32 @@ def main() -> int:
                           "复现入口，不是默认模式）")
     ap.add_argument("--id-prefix", default=None,
                      help="--sample-uncertain 用的 id 前缀，默认按 split 推 "
-                          "utrain/uholdout")
+                          "utrain/uholdout。补标新一批时**必须换一个**，"
+                          "两批 id 撞了 apply_teacher_labels 会张冠李戴且不报错")
+    ap.add_argument("--exclude-labelled", action="store_true",
+                     help="排除 teacher_candidates_<split>.jsonl 里已经标注过的"
+                          "（按 case_id+候选文本，不是按名次）。ticket 23 补标用")
+    ap.add_argument("--all-remaining", action="store_true",
+                     help="不抽样，把排除之后剩下的全要（train 侧补标是全量）")
     args = ap.parse_args()
 
     records = load_split(ROOT / "verifier" / f"{args.split}.jsonl")
     jargon = load_jargon()
 
-    if args.sample_uncertain is not None:
+    if args.sample_uncertain is not None or args.all_remaining:
         uncertain = build_uncertain_candidate_pool(records, jargon)
         prefix = args.id_prefix or ("utrain" if args.split == "train" else "uholdout")
-        sampled = sample_uncertain_candidates(uncertain, args.sample_uncertain, prefix)
-        print(f"{args.split} 不确定候选池 {len(uncertain)} 条 -> 抽样 {len(sampled)} 条（前缀 {prefix}）")
+        exclude: set[tuple[str, str]] = set()
+        if args.exclude_labelled:
+            teacher_path = ROOT / "verifier" / f"teacher_candidates_{args.split}.jsonl"
+            if teacher_path.exists():
+                exclude = {(d["case_id"], d["candidate_text"])
+                           for d in load_teacher_candidate_labels(teacher_path)}
+        n = None if args.all_remaining else args.sample_uncertain
+        sampled = sample_uncertain_candidates(uncertain, n, prefix, exclude=exclude)
+        print(f"{args.split} 不确定候选池 {len(uncertain)} 条"
+              + (f"，排除已标注 {len(exclude)} 条" if exclude else "")
+              + f" -> 取 {len(sampled)} 条（前缀 {prefix}）")
         out = args.out or (WORK / f"uncertain_sample_{args.split}.json")
         WORK.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(sampled, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -403,3 +403,49 @@ def test_sample_uncertain_candidates_output_feeds_apply_teacher_labels():
     out = apply_teacher_labels(sampled, judgments)
     labels = {it["candidate_text"]: it["label"] for it in out}
     assert labels == {"布洛芬": True, "维生素": False}
+
+
+# ---------- 补标剩余不确定候选（ticket 23） ----------
+
+def _uncertain(case_id, text):
+    return {"case_id": case_id, "candidate_text": text, "source_text": "s", "answer": "a",
+            "kind": "lexicon", "red_line_guess": 0}
+
+
+def test_sample_excludes_already_labelled_by_content_not_by_rank():
+    """**必须按 `(case_id, candidate_text)` 排除，不能按名次排除。**
+
+    历史上那 250 条是一次性脚本抽的、脚本没入库，它的名次顺序无从复现——
+    "跳过前 100 名"会跳错人：可能重复派发已经标过的，也可能永远漏掉某些条目。
+    内容键是唯一稳的锚。"""
+    pool = [_uncertain(f"c{i}", f"药{i}") for i in range(6)]
+    done = {(pool[0]["case_id"], pool[0]["candidate_text"]),
+            (pool[3]["case_id"], pool[3]["candidate_text"])}
+    out = sample_uncertain_candidates(pool, n=None, prefix="u2", exclude=done)
+    got = {(it["case_id"], it["candidate_text"]) for it in out}
+    assert len(out) == 4
+    assert got.isdisjoint(done)
+
+
+def test_sample_with_n_none_takes_everything_remaining():
+    """train 侧是**全量补标**（252 条），不是抽样——n=None 表示"剩下的全要"。"""
+    pool = [_uncertain(f"c{i}", f"药{i}") for i in range(5)]
+    assert len(sample_uncertain_candidates(pool, n=None, prefix="u2")) == 5
+
+
+def test_sample_ids_do_not_collide_with_the_earlier_batch():
+    """新一批的 id 前缀必须和历史那批区分开，否则 `apply_teacher_labels` 的
+    judgments 字典会张冠李戴——而它是按 id 查的，撞了不会报错。"""
+    pool = [_uncertain(f"c{i}", f"药{i}") for i in range(3)]
+    ids = {it["id"] for it in sample_uncertain_candidates(pool, n=None, prefix="utrain2")}
+    assert all(i.startswith("utrain2-") for i in ids)
+    assert len(ids) == 3
+
+
+def test_sampling_is_deterministic_under_exclusion():
+    pool = [_uncertain(f"c{i}", f"药{i}") for i in range(20)]
+    ex = {(pool[2]["case_id"], pool[2]["candidate_text"])}
+    a = sample_uncertain_candidates(pool, n=5, prefix="u2", exclude=ex)
+    b = sample_uncertain_candidates(pool, n=5, prefix="u2", exclude=ex)
+    assert [x["id"] for x in a] == [x["id"] for x in b]
+    assert [x["candidate_text"] for x in a] == [x["candidate_text"] for x in b]

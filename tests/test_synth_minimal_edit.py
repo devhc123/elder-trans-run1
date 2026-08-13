@@ -413,3 +413,93 @@ def test_cap_source_concentration_is_a_noop_on_realistic_scale_pools():
     items = [{"case_id": f"c{i}-0", "source_case_id": f"c{i}"} for i in range(1200)]
     out = _cap_source_concentration(items, MAX_SOURCE_SHARE)
     assert len(out) == len(items)
+
+
+# ---------- 注入负例生成器（ticket 24） ----------
+
+def _pass_record(case_id, source, answer):
+    return {
+        "case_id": case_id,
+        "input": f"【原文】\n{source}\n\n【回答】\n{answer}\n\n【要点】\n0. x",
+        "output": '{"key_points": [], "red_lines": [], "verdict": "pass"}',
+    }
+
+
+def test_grounded_injection_reuses_the_positive_template_verbatim():
+    """措辞一分叉，负例就又能被措辞特征认出来——等于把捷径从位置挪到用词。
+    注入句必须是正例那三个模板之一，一个字都不新造。"""
+    from verifier.synth_minimal_edit import TEMPLATES, build_grounded_injection
+    rec = _pass_record("c1", "本品为甲硝唑片，与其他药物合用需注意。", "请遵医嘱服药。")
+    out = build_grounded_injection(rec, {"甲硝唑"})
+    assert out
+    tail = out[0]["answer"].splitlines()[-1]
+    assert any(tail == t.format(names="甲硝唑") for t in TEMPLATES)
+    assert out[0]["label"] is False
+
+
+def test_grounded_injection_only_takes_terms_that_are_in_source_and_not_in_answer():
+    """注入词必须 source 里有（才标 False 站得住）、answer 里没有（候选才只
+    出现在括注内，否则位置特征还是能分开）。"""
+    from verifier.synth_minimal_edit import build_grounded_injection
+    rec = _pass_record("c1", "本品为甲硝唑片。", "医生给您开的是甲硝唑。")
+    assert build_grounded_injection(rec, {"甲硝唑"}) == []      # 已在 answer 里
+    assert build_grounded_injection(rec, {"阿莫西林"}) == []    # 不在 source 里
+
+
+def test_grounded_injection_skips_cases_without_a_druglike_term():
+    """**只挑药名形，挑不到就整条跳过。** 往"像X这类药"的框架里塞
+    "慢性支气管炎急性发作"这类非药实体，会造出"括注里不是药名 ⇒ 负例"
+    这个新的可学特征——措辞对齐了、语义类别没对齐，等于换了个地方留捷径。"""
+    from verifier.synth_minimal_edit import build_grounded_injection
+    rec = _pass_record("c1", "慢性支气管炎急性发作需要注意休息。", "请多休息。")
+    assert build_grounded_injection(rec, {"慢性支气管炎急性发作"}) == []
+
+
+def test_equivalent_form_injection_is_not_grounded_but_is_supported():
+    """等价形式负例填的正是"在括注内 ∧ 非grounded"这个合取捷径唯一被填上的
+    那一格：候选值与原文相同、写法不同，所以字符串对不上（非 grounded）、
+    但确实有依据（标 False）。"""
+    from verifier.redline_candidates import CN_NUMERAL_RE, normalize
+    from verifier.synth_minimal_edit import build_equivalent_form_injection
+    rec = _pass_record("c1", "一般连续用药不超过3天。", "请按医生说的吃。")
+    out = build_equivalent_form_injection(rec)
+    assert len(out) == 1
+    assert out[0]["candidate_text"] == "三天"
+    assert out[0]["label"] is False
+    # 非 grounded：原文里没有"三天"这个 cn_numeral span
+    assert "三天" not in set(CN_NUMERAL_RE.findall(normalize(rec["input"])))
+
+
+def test_equivalent_form_uses_templates_derived_from_the_positive_phrases():
+    """模板从 NUMERIC_INJECTIONS 自动派生，不是手写第二套——以后改正例短语
+    时负例自动跟着变，不会出现"改了正例忘了改负例"的漂移。"""
+    from verifier.synth_minimal_edit import NUMERIC_INJECTIONS, SLOT_TEMPLATES
+    for tpl in SLOT_TEMPLATES:
+        head = tpl.split("{n}")[0]
+        assert any(p.startswith(head) for p in NUMERIC_INJECTIONS), f"{tpl} 不是从正例短语派生的"
+
+
+def test_equivalent_form_skips_when_the_variant_already_appears():
+    """等价写法若恰好已在原文/原答案里出现，它就是普通 grounded 候选，
+    段A 根本不会抽出来，造了也进不了生产分布。"""
+    from verifier.synth_minimal_edit import build_equivalent_form_injection
+    assert build_equivalent_form_injection(
+        _pass_record("c1", "连续用药不超过3天，也就是三天。", "请遵医嘱。")) == []
+
+
+def test_injected_phrase_never_smuggles_an_ungrounded_number():
+    """**注入负例最要紧的一条不变量。** 少了它会在一个标 False 的答案里塞进
+    一个真的编造数字——那不是"质量差"，是货真价实的错标，而且没有任何信号。"""
+    from verifier.synth_minimal_edit import _spans_are_all_supported
+    nsrc = "一般连续用药不超过3天，每次2片。"
+    assert _spans_are_all_supported("一般连续用药不超过3天", nsrc, allow_equivalent=False)
+    assert not _spans_are_all_supported("一般连续用药不超过9天", nsrc, allow_equivalent=False)
+    # 等价形式只对 allow_equivalent 开
+    assert _spans_are_all_supported("连续用药不超过三天", nsrc, allow_equivalent=True)
+    assert not _spans_are_all_supported("连续用药不超过三天", nsrc, allow_equivalent=False)
+
+
+def test_injection_position_is_byte_identical_to_the_positive_path():
+    """插入位置差一个字符，"位置"就重新变成可学特征。"""
+    from verifier.synth_minimal_edit import _inject
+    assert _inject("答案正文。  \n", "（补充一句：x。）") == "答案正文。\n\n（补充一句：x。）"
