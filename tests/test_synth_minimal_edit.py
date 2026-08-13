@@ -503,3 +503,18 @@ def test_injection_position_is_byte_identical_to_the_positive_path():
     """插入位置差一个字符，"位置"就重新变成可学特征。"""
     from verifier.synth_minimal_edit import _inject
     assert _inject("答案正文。  \n", "（补充一句：x。）") == "答案正文。\n\n（补充一句：x。）"
+
+
+def test_equivalent_form_never_reads_the_fractional_part_of_a_decimal():
+    """**ticket 25 的教师盲检抓出来的 bug。** 50 条抽检里教师判违规的恰好只有
+    2 条，两条都是它：`(\\d+)(单位)` 会匹配小数的小数部分——原文「0.2克」被抓成
+    「2克」、「4.1倍」被抓成「1倍」，生成的"等价形式"跟原文差 10 倍，却被标成
+    False（有依据）。是错标，不是质量问题，且没有任何信号。"""
+    from verifier.synth_minimal_edit import build_equivalent_form_injection
+    for src in ("保泰松0.1～0.2克，吲哚美辛25～50毫克。",
+                "乳汁中浓度为血药浓度的0.6~4.1倍。"):
+        rec = {"case_id": "c1",
+               "input": f"【原文】\n{src}\n\n【回答】\n请遵医嘱。\n\n【要点】\n0. x",
+               "output": '{"key_points": [], "red_lines": [], "verdict": "pass"}'}
+        out = build_equivalent_form_injection(rec)
+        assert out == [], f"{src} 不该产出等价形式负例，拿到 {out}"

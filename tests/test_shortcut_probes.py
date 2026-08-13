@@ -243,22 +243,32 @@ def test_template_suffix_coupling_is_asserted_not_assumed():
     与生成模板是隐式耦合。模板改了措辞，这个探针会**静默失效**——而探针失效的
     表现是 J=0，也就是"很干净"，方向最坏。用断言把耦合显式化（同
     `TEMPLATE_PREFIXES` 那次的做法），改坏了立刻炸而不是悄悄放行。"""
-    from verifier.candidate_pool import STRUCTURAL_NEGATIVE_FILLERS
     from verifier.shortcut_probes import TEMPLATE_SUFFIX
-    from verifier.synth_minimal_edit import TEMPLATES
+    from verifier.synth_minimal_edit import NUMERIC_WRAPPER, TEMPLATES
 
-    for t in list(TEMPLATES) + [f for v in STRUCTURAL_NEGATIVE_FILLERS.values() for f in v]:
-        assert t.endswith(TEMPLATE_SUFFIX)
+    for phrase in list(TEMPLATES) + [NUMERIC_WRAPPER.format("x")]:
+        assert phrase.endswith(TEMPLATE_SUFFIX)
 
 
 # ---------- 修复前的基线（ticket 26 的对照臂） ----------
 
-def test_current_adversarial_subset_is_fully_cracked_by_the_position_probe():
-    """**修复前的基线，不是期望的最终状态。**
+def test_adversarial_subset_position_shortcuts_are_dead():
+    """**ticket 26 完成后的状态。** 这条测试原本固化的是"修复前"的基线
+    （负例是零候选安慰语，括注里没有任何候选，于是"候选是否落在括注之后"
+    把两类完全分开：J=1.000；"候选落在末 15%"：J=0.894）。
 
-    当前对抗子集的负例是"零候选安慰语装饰过的 pass 答案"——括注里没有任何
-    候选，所以"候选是否落在括注之后"这个纯位置特征把两类完全分开。
-    ticket 26 改完数据构造后这条会降到 ≤0.3，届时连同基线数字一起更新本测试。
+    换成两类注入负例（grounded 药名 + 等价形式数字）之后，括注里真的有候选了，
+    四条纯结构探针全部塌到门槛以内：
+
+    | 探针 | 修复前 | 修复后 |
+    |---|---:|---:|
+    | candidate_in_parenthetical | 1.000 | 0.008 |
+    | candidate_in_last_15pct | 0.894 | 0.000 |
+    | template_prefix_present | 0.000 | 0.000 |
+    | answer_ends_with_paren | 0.000 | 0.000 |
+
+    这条测试守的是"别退回去"：任何让纯结构探针重新抬头的数据构造改动都会
+    在这里炸掉，而不是等下一轮审计去发现。
     """
     from verifier.adversarial_subset import build_adversarial_subset
     from verifier.redline_candidates import load_jargon
@@ -269,11 +279,15 @@ def test_current_adversarial_subset_is_fully_cracked_by_the_position_probe():
         if line.strip()
     ]
     subset = build_adversarial_subset(records, load_jargon())
-    s = score_pool(subset)["candidate_in_parenthetical"]
-    assert s.tpr == 1.0
-    assert s.fpr < 0.01
-    assert s.youden_j > 0.98
-    assert gate_failures(score_pool(subset))          # 门槛现在就该是红的
+    scores = score_pool(subset)
+    for name in STRUCTURE_PROBES:
+        assert scores[name].youden_j <= STRUCTURE_GATE_J, (
+            f"{name} 的 J 回到了 {scores[name].youden_j:.3f}——位置捷径退回去了")
+    assert gate_failures(scores) == []
+    # 合取探针**消不掉**（正例恰好就是"注入进去的、原文没有的那个词"），
+    # 但等价形式负例把它从 1.000 压到了 0.7 以下。这条只报告不设门，
+    # 断言它没有回到接近满分即可。
+    assert scores["conjunction_in_paren_and_not_grounded"].youden_j < 0.8
 
 
 # ---------- L5（铁律15 文献门）落进代码的三条判读规则 ----------

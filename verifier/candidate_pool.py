@@ -29,44 +29,15 @@ sys.path.insert(0, str(ROOT))
 
 from verifier.judge_candidates import derive_candidate_label  # noqa: E402
 from verifier.redline_candidates import extract_candidates, load_jargon, parse_case_text  # noqa: E402
-from verifier.synth_minimal_edit import TEMPLATE_PREFIXES  # noqa: E402
 
 WORK = ROOT / "verifier" / "work"
 
-# **结构性负例**（第三轮独立审计发现的问题一的修复）：只看答案有没有含
-# 固定括注模板这一个特征，不读原文、不做任何语义判断，就能在对抗子集上
-# 拿到 100% 召回 / 0% 误报——train/holdout 的合成正例统一用"答案末尾追加
-# 括注"的结构，模型可能只学会认这个结构。这里造"括注存在但内容真实无害"
-# 的负例：对 `verdict=pass` 的真实案例，答案后面追加一句**不含任何可
-# 提取候选**的安慰语，让"有没有括注"这个特征在正负例里都出现。
-#
-# **必须复用跟合成正例相同的括注前缀**（"（补充一句：""（顺带说一句，"
-# "（这类"），不能自己另起一套不重叠的措辞——否则退化分类器只需要认
-# "这三个具体前缀"，换一套新前缀完全不影响它继续 100% 命中原来的正例，
-# 等于没堵。填充内容本身必须零候选（已用测试核对：无数字/中文数词/
-# 分数/词表实体），这样附着在同一答案上的原有可信候选标签不受影响，
-# 只是答案多了一句结构上像"编造注入"、内容上完全无害的括注。
-STRUCTURAL_NEGATIVE_FILLERS: dict[str, list[str]] = {
-    "train": [
-        "（补充一句：具体请以医嘱为准，这里说的都是一类情况。）",
-        "（顺带说一句，用药安全最重要，有疑问随时问医生。）",
-        "（这类情况的具体细节，建议咨询医生。）",
-    ],
-    "holdout": [
-        "（补充一句：以上仅供参考，一切遵医嘱执行。）",
-        "（顺带说一句，安全用药最重要，别自己乱做主。）",
-        "（这类问题的具体答案，还是要听医生的。）",
-    ],
-}
-assert all(
-    f.startswith(TEMPLATE_PREFIXES) for fillers in STRUCTURAL_NEGATIVE_FILLERS.values() for f in fillers
-), "安慰语前缀必须复用 synth_minimal_edit.TEMPLATE_PREFIXES，不能另起一套"
-
-# 结构性负例的 case_id 后缀——`train_lora.py` 靠它从最终候选池里数出
-# 结构性负例的条数。两处都从这里导入，不各写一份字面量（`/code-review`
-# 发现原来是两处独立硬编码同一个魔法字符串，改一处忘改另一处会让统计
-# 静默算错，不报错）。
-STRUCTURAL_NEGATIVE_SUFFIX = "-structneg"
+# 注入负例的 case_id 后缀。**两类分开标**——它们的难度差一个量级
+# （grounded 是字符串查表就能做对；等价形式要真读懂"值相同写法不同"），
+# 混在一个误报率里看不出模型是靠哪一类过的关。`train_lora.py` 与
+# `eval_candidate_verifier.py` 都从这里导入，不各写一份字面量。
+STRUCTURAL_NEGATIVE_SUFFIX = "-structneg"    # grounded 实体注入
+EQUIVALENT_FORM_SUFFIX = "-eqformneg"        # 等价形式数字注入
 
 
 def build_trusted_candidate_pool(records: list[dict], jargon: set[str]) -> list[dict]:
@@ -132,59 +103,50 @@ def build_uncertain_candidate_pool(records: list[dict], jargon: set[str]) -> lis
     return pool
 
 
-def build_structural_negatives(
-    records: list[dict], jargon: set[str], *, holdout: bool = False, max_items: int | None = None
+def build_injection_negatives(
+    records: list[dict], jargon: set[str], *,
+    max_entity: int | None = None, max_equivalent: int | None = None,
 ) -> list[dict]:
-    """造"括注结构存在但内容真实无害"的负例（问题一的修复，见模块顶部
-    `STRUCTURAL_NEGATIVE_FILLERS` 的注释）。
+    """两类**注入负例**：与合成正例同模板、同插入位置、同措辞，只有内容不同。
 
-    只对 `verdict=pass` 的真实案例生效——answer 后面追加一句零候选的
-    安慰语，答案里**原本就有**的可信候选（本来就该标 False）原样保留，
-    只是现在这些候选所在的答案里也出现了"括注"这个结构特征，让这个
-    特征在正负例里都出现。`holdout=True` 用另一组安慰语（同一套
-    train/holdout 隔离纪律：验收用的结构不能是训练时见过的那几句原话，
-    虽然这里堵的是"结构"不是"内容"，用不同句子仍然更干净）。
+    取代原来的"零候选安慰语"（ticket 26）。那一版只共享了括注前缀、内容刻意
+    零候选，于是"括注在不在"失效了、"**候选**在不在括注里"照样把两类完全分开
+    ——ticket 17 的探针实测对抗子集 J=1.000。现在括注里真的有候选：
 
-    `max_items`：可信池里 pass 案例候选本来就有 5000+ 条，全部装饰一遍
-    会让候选级训练集的正例占比从 15.8% 再腰斩到 8.6%，重新逼近 ticket
-    09/11 坍缩过的量级区间——目的只是让"有没有括注"这个特征不再完美
-    区分正负例，不需要每条负例都装饰一遍，按 case_id 排序取前 N 条即可
-    （确定性、不随机）。默认 None 表示不设上限（供只关心正确性的测试和
-    调用方自己控制规模）。"""
-    fillers = STRUCTURAL_NEGATIVE_FILLERS["holdout" if holdout else "train"]
-    out: list[dict] = []
+    - **grounded 实体注入**（`STRUCTURAL_NEGATIVE_SUFFIX`）：注入 source 里确实
+      有、answer 里没有的药名。杀"候选在括注内 ⇒ 违规"。
+    - **等价形式注入**（`EQUIVALENT_FORM_SUFFIX`）：原文「3天」→ 注入「三天」，
+      非 grounded 却有依据。杀"在括注内 ∧ 非grounded"这个合取——那是三格里
+      唯一能用规则填上的一格，其余按红线定义不存在（见 `shortcut_probes`）。
+
+    **两类分别设上限**：等价形式全是数字类、实体全是词表类，用一个总数上限截断
+    会让 kind 分布随机倾斜（ticket 17 的探针⑦ 盯的就是这个）。
+
+    只对 `verdict=pass` 的案例生效——fail 答案里本来就有真违规，再叠注入会让
+    标签失去意义。按 case_id 排序遍历，确定性、不随机。"""
+    from verifier.synth_minimal_edit import (
+        build_equivalent_form_injection,
+        build_grounded_injection,
+    )
+
+    entity: list[dict] = []
+    equivalent: list[dict] = []
     for r in sorted(records, key=lambda r: r["case_id"]):
-        if max_items is not None and len(out) >= max_items:
-            break
-        src, ans = parse_case_text(r["input"])
-        gold = json.loads(r["output"])
-        if gold.get("verdict") != "pass":
+        if json.loads(r["output"]).get("verdict") != "pass":
             continue
-        candidates = extract_candidates(src, ans, jargon)
-        if not candidates:
-            continue
-        digest = hashlib.sha256(f"structneg:{r['case_id']}".encode()).hexdigest()
-        filler = fillers[int(digest, 16) % len(fillers)]
-        decorated_answer = ans.rstrip() + "\n\n" + filler
-        for c in candidates:
-            out.append({
-                "case_id": f"{r['case_id']}{STRUCTURAL_NEGATIVE_SUFFIX}",
-                "source_text": src,
-                "answer": decorated_answer,
-                "candidate_text": c["text"],
-                "kind": c["kind"],
-                "red_line_guess": c["red_line_guess"],
-                "label": False,
-            })
-    # **`/code-review` 发现的真 bug**：上面每条记录只检查一次
-    # `len(out) >= max_items`，但一条记录的内层循环可能一次性追加多个
-    # 候选——卡在刚好差 1 条时，下一条记录如果有 N 个候选会整条超发
-    # N-1 条（实测：train 全量 + max_items=1015 时曾返回 1016 条）。
-    # 这里做硬截断，保证返回值绝不超过 max_items；不影响确定性前缀性质
-    # （records 已按 case_id 排序，截断前的 out 本身就是确定性顺序）。
-    if max_items is not None:
-        out = out[:max_items]
-    return out
+        if max_entity is None or len(entity) < max_entity:
+            for c in build_grounded_injection(r, jargon):
+                entity.append({**c, "case_id": f"{r['case_id']}{STRUCTURAL_NEGATIVE_SUFFIX}"})
+        if max_equivalent is None or len(equivalent) < max_equivalent:
+            for c in build_equivalent_form_injection(r):
+                equivalent.append({**c, "case_id": f"{r['case_id']}{EQUIVALENT_FORM_SUFFIX}"})
+    # 硬截断：内层循环一次可能追加多个候选，卡在差 1 条时会整条超发
+    # （`/code-review` 在上一版抓到过同款 bug，这里保留同样的防线）。
+    if max_entity is not None:
+        entity = entity[:max_entity]
+    if max_equivalent is not None:
+        equivalent = equivalent[:max_equivalent]
+    return entity + equivalent
 
 
 def sample_uncertain_candidates(

@@ -105,9 +105,10 @@ TEMPLATES = [
     "（这类药常见的还有{names}。）",
 ]
 
-# 每个模板的括注前缀——`candidate_pool.STRUCTURAL_NEGATIVE_FILLERS` 必须
-# 复用这几个前缀（不能自己另起一套），否则打掉"括注即违规"捷径的负例
-# 跟正例用的不是同一批模板标记，退化分类器只需要多认几个新前缀就绕过去。
+# 每个模板的括注前缀——注入负例（`build_grounded_injection` /
+# `build_equivalent_form_injection`）必须复用这几个前缀，否则打掉
+# "括注即违规"捷径的负例跟正例用的不是同一批标记，退化分类器只需要
+# 多认几个新前缀就绕过去。
 # 这里是唯一定义处，`candidate_pool.py` 和它的测试都从这里导入，不再
 # 各自手抄一份字面量元组（第三份独立副本曾经导致"改了 TEMPLATES 却忘了
 # 同步测试里的硬编码副本"这类静默漂移，`/code-review` 发现）。
@@ -161,7 +162,15 @@ DIGIT_TO_CN: dict[int, str] = {
     1: "一", 2: "两", 3: "三", 4: "四", 5: "五",
     6: "六", 7: "七", 8: "八", 9: "九", 10: "十",
 }
-_DIGIT_UNIT_RE = re.compile(rf"(\d+)({_UNIT_ALT})")
+# `(?<![\d.])` 不可省：没有它，`(\d+)(单位)` 会匹配到**小数的小数部分**——
+# 原文「保泰松0.1～0.2克」被抓成「2克」，生成的"等价形式"是「两克」，而
+# 两克 ≠ 0.2克，差 10 倍；「0.6~4.1倍」被抓成「1倍」同理。这两条会被标成
+# False（有依据），是货真价实的错标，且没有任何信号。
+#
+# **这个 bug 是 ticket 25 的教师盲检抓出来的**：50 条里教师判 violated 的
+# 恰好只有 2 条，两条都是它。盲检的价值在这里体现得最直接——它不是在质检
+# "标签噪声"，是在质检生成器。
+_DIGIT_UNIT_RE = re.compile(rf"(?<![\d.])(\d+)({_UNIT_ALT})")
 
 
 def _numeric_spans(text: str) -> list[str]:
@@ -552,13 +561,23 @@ def _spans_are_all_supported(phrase: str, nsrc: str, allow_equivalent: bool) -> 
 # 这批尾缀是从 `CATEGORY_EXAMPLES` 里实际出现的药名归纳的，不是凭空列的。
 # 它只用来**排序**（药名优先），挑不到药名时仍会兜底用普通 grounded 实体
 # ——兜底比例会被 CLI 报出来，好让审计判断这条启发式够不够。
-_DRUGLIKE_SUFFIXES = (
-    "素", "林", "唑", "嗪", "星", "汀", "酯", "胺", "醇", "酮", "苷", "碱", "钠", "钾", "钙",
-    "片", "胶囊", "颗粒", "注射液", "口服液", "软膏", "栓", "滴眼液", "喷雾剂",
-)
+# **自动从 `CATEGORY_EXAMPLES` 派生**，不手写。第一版是手写的，漏掉了
+# "平/利/坦"这一大家子（"硝苯地平"就不认识），实测只有 16% 的 grounded 实体
+# 被认成药名——手写清单一定会漏，而漏了不报错，只会让注入负例悄悄变少。
+# 剂型词单独补：`CATEGORY_EXAMPLES` 里几乎都是通用名，不带剂型后缀。
+_DOSAGE_FORMS = ("片", "胶囊", "颗粒", "注射液", "口服液", "软膏", "栓", "滴眼液", "喷雾剂", "丸", "散")
+_DRUGLIKE_SUFFIXES = tuple(sorted(
+    {n[-1] for v in CATEGORY_EXAMPLES.values() for n in v} | {n[-1] for n in DEFAULT_EXAMPLES}
+    | set(_DOSAGE_FORMS)
+))
 
 
 def _is_druglike(term: str) -> bool:
+    """看起来像药名（末字落在项目自己的药名词汇的末字集合里）。
+
+    这是个**启发式**，不是判定——它只用来在 grounded 注入时优先/限定挑药名，
+    挑错了最坏结果是少造几条负例或造出一条读着别扭的注入句，不会产生错标
+    （标签由"这个词在不在 source 里"决定，与像不像药无关）。"""
     return term.endswith(_DRUGLIKE_SUFFIXES)
 
 

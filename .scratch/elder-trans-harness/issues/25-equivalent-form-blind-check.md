@@ -30,10 +30,10 @@
 
 **Blocked by:** 24（要先有生成器才有东西可检）
 
-**Status:** ready-for-agent
+**Status:** done（2026-08-13）
 
-- [ ] 确定性抽样 train / holdout 各 25 条
-- [ ] 盲评 prompt 不透露批次身份、不透露预期标签
-- [ ] 结果落盘 `verifier/teacher_equivalent_form_check.jsonl`（独立文件）
-- [ ] 算出一致率，**按三档预注册动作执行**，执行的是哪一档写进票据
-- [ ] 若命中 90–95% 档，降级理由与影响范围写清楚
+- [x] 确定性抽样 train / holdout 各 25 条
+- [x] 盲评 prompt 不透露批次身份、不透露预期标签
+- [x] 结果落盘 `verifier/teacher_equivalent_form_check.jsonl`（独立文件）
+- [x] 算出一致率，**按三档预注册动作执行**，执行的是哪一档写进票据
+- [x] 若命中 90–95% 档，降级理由与影响范围写清楚

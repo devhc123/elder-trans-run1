@@ -93,10 +93,9 @@ def test_build_adversarial_subset_contains_both_positive_and_negative_labels():
     （只认括注结构）又能在这份验收集上拿满分。"""
     records = [
         _record("h1", "本品与抗血小板类药物合用需注意。", "请遵医嘱。"),
-        # 这条 pass 案例的答案里有可信候选（"硝苯地平"不在 source 里，
-        # 但整案例判 pass），才能触发结构性负例——同 candidate_pool 测试
-        # 用的那个例子。
-        _record("h2", "本药物用于降压治疗。", "医生给您开的是硝苯地平。"),
+        # 注入负例要求：药名形实体、**在 source 里**、**不在 answer 里**
+        # （候选只出现在括注内，位置特征才在正负例里都出现）。
+        _record("h2", "本药物为硝苯地平片，用于降压治疗。", "医生说按时吃就行。"),
     ]
     records += [_record(f"pad{i}", "本品属于降压类药物。", "请遵医嘱。") for i in range(25)]
     out = build_adversarial_subset(records, jargon={"硝苯地平"})
@@ -119,9 +118,13 @@ def test_build_adversarial_subset_respects_explicitly_empty_jargon():
 def test_build_adversarial_subset_negatives_are_structurally_decorated_but_grounded():
     """负例必须真的带上括注结构（不然没有打掉捷径的效果），但候选内容
     仍然是可信的（原答案里本来就有、判 pass 的候选）。"""
-    records = [_record("h1", "本药物用于降压治疗。", "医生给您开的是硝苯地平。")]
+    records = [_record("h1", "本药物为硝苯地平片，用于降压治疗。", "医生说按时吃就行。")]
     records += [_record(f"pad{i}", "本品属于降压类药物。", "请遵医嘱。") for i in range(25)]
     out = build_adversarial_subset(records, jargon={"硝苯地平"})
     negatives = [it for it in out if it["label"] is False]
     assert negatives
     assert any("硝苯地平" in it["candidate_text"] for it in negatives)
+    # 负例的候选必须真的落在注入的括注里——这正是要打掉的那条位置捷径
+    neg = next(it for it in negatives if it["candidate_text"] == "硝苯地平")
+    assert neg["answer"].splitlines()[-1].startswith("（")
+    assert "硝苯地平" in neg["answer"].splitlines()[-1]

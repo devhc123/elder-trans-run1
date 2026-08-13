@@ -42,7 +42,10 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from metrics.wilson import wilson  # noqa: E402
-from verifier.candidate_pool import STRUCTURAL_NEGATIVE_SUFFIX  # noqa: E402
+from verifier.candidate_pool import (  # noqa: E402
+    EQUIVALENT_FORM_SUFFIX,
+    STRUCTURAL_NEGATIVE_SUFFIX,
+)
 from verifier.redline_candidates import is_list_ordinal  # noqa: E402
 from verifier.shortcut_probes import PROBES, STRUCTURE_PROBES, ProbeScore, score_pool  # noqa: E402
 from verifier.train_lora import candidate_id  # noqa: E402
@@ -67,10 +70,9 @@ ADV_MIN_POSITIVES = 50
 # 负例的来源分类，按 case_id 后缀。不同来源难度差很多（grounded 注入是字符串
 # 查表就能做对，普通可信负例才是真难的那类），混在一个误报率里看不出模型是
 # 靠哪一类过的关。
-# **ticket 26 新增等价形式负例时要在这里加一行**，否则它会被归进"普通可信负例"，
-# 误报率会算到错误的那一档上。
 NEGATIVE_FLAVORS: tuple[tuple[str, str], ...] = (
-    (STRUCTURAL_NEGATIVE_SUFFIX, "结构性注入负例"),
+    (STRUCTURAL_NEGATIVE_SUFFIX, "grounded 注入负例（字符串查表就能做对）"),
+    (EQUIVALENT_FORM_SUFFIX, "等价形式注入负例（要真读懂值相同写法不同）"),
 )
 PLAIN_NEGATIVE = "普通可信负例"
 

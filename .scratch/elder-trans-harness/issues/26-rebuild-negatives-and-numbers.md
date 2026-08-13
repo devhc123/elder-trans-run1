@@ -42,18 +42,18 @@
 **Blocked by:** 17（探针与基线）、23（教师补标改变正例数，负例按它配平）、24（生成器）、
 25（盲检结果决定等价形式负例进不进对抗子集）
 
-**Status:** ready-for-agent
+**Status:** done（2026-08-13）
 
-- [ ] `build_structural_negatives` 重写为两类注入，`STRUCTURAL_NEGATIVE_FILLERS` 删除
-- [ ] 后缀常量单一定义，统计侧从常量导入（不写字面量）
-- [ ] **等价形式后缀加进 `eval_candidate_verifier.NEGATIVE_FLAVORS`**——漏了它不会报错，
+- [x] `build_structural_negatives` 重写为两类注入，`STRUCTURAL_NEGATIVE_FILLERS` 删除
+- [x] 后缀常量单一定义，统计侧从常量导入（不写字面量）
+- [x] **等价形式后缀加进 `eval_candidate_verifier.NEGATIVE_FLAVORS`**——漏了它不会报错，
       只会让等价形式负例被归进"普通可信负例"，误报率算到错误的那一档上
-- [ ] 对抗子集负例只放两类注入
-- [ ] kind 探针超门时按预注册动作从 grounded 实体补，执行与否写进票据
-- [ ] 重跑三条重建 CLI，记录新的四行数字
-- [ ] **对抗子集纯结构探针①-④ 全部 J ≤ 0.3**
-- [ ] **训练池探针② 的 J 低于 ticket 17 测出的基线**（趋势门）
-- [ ] 候选级训练集两次生成**逐字节一致**（确定性纪律）
-- [ ] 0 条矛盾标签、0 条重复 id
-- [ ] ticket 14 banner 四行数字更新 + 探针对照表 + 合取捷径的诚实记录
-- [ ] 全量测试 + pyflakes 干净
+- [x] 对抗子集负例只放两类注入
+- [x] kind 探针超门时按预注册动作从 grounded 实体补，执行与否写进票据
+- [x] 重跑三条重建 CLI，记录新的四行数字
+- [x] **对抗子集纯结构探针①-④ 全部 J ≤ 0.3**
+- [x] **训练池探针② 的 J 低于 ticket 17 测出的基线**（趋势门）
+- [x] 候选级训练集两次生成**逐字节一致**（确定性纪律）
+- [x] 0 条矛盾标签、0 条重复 id
+- [x] ticket 14 banner 四行数字更新 + 探针对照表 + 合取捷径的诚实记录
+- [x] 全量测试 + pyflakes 干净

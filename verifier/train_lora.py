@@ -255,7 +255,7 @@ def build_candidate_training_pool(train_records: list[dict]) -> list[dict]:
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
     from verifier.candidate_pool import (
-        build_structural_negatives,
+        build_injection_negatives,
         build_trusted_candidate_pool,
         load_teacher_candidate_labels,
     )
@@ -272,19 +272,14 @@ def build_candidate_training_pool(train_records: list[dict]) -> list[dict]:
     teacher_path = root / "verifier" / "teacher_candidates_train.jsonl"
     teacher_labeled = load_teacher_candidate_labels(teacher_path) if teacher_path.exists() else []
     synthetic = synthetic_records_to_candidates(synthesize_all(train_records))
-    n_positives = (
-        sum(1 for it in trusted if it["label"])
-        + sum(1 for it in teacher_labeled if it["label"])
-        + len(synthetic)
+    # 两类注入负例按 **kind 分别配平**（ticket 26）：实体负例对齐实体正例、
+    # 数字负例把可用的全用上。用一个总数上限截断会让 kind 分布随机倾斜，
+    # 而 ticket 17 的探针⑦ 正是盯这个的。
+    n_entity_pos = sum(1 for it in synthetic if it["red_line_guess"] == 0)
+    injection_negatives = build_injection_negatives(
+        train_records, jargon, max_entity=n_entity_pos, max_equivalent=None
     )
-    # 结构性负例数量对齐正例总数（约1:1）——可信池里 pass 案例候选有
-    # 5000+ 条，全装饰一遍会把正例占比从15.8%再腰斩到8.6%，重新逼近
-    # ticket 09/11 坍缩过的区间；目的只是让"有没有括注"这个特征不再
-    # 完美区分正负例，不需要每条负例都装饰一遍。
-    structural_negatives = build_structural_negatives(
-        train_records, jargon, holdout=False, max_items=n_positives
-    )
-    return trusted + teacher_labeled + synthetic + structural_negatives
+    return trusted + teacher_labeled + synthetic + injection_negatives
 
 
 def infer_is_positive(rows: list[dict]):
@@ -461,7 +456,10 @@ def main() -> int:
         root = Path(__file__).resolve().parent.parent
         if str(root) not in sys.path:
             sys.path.insert(0, str(root))
-        from verifier.candidate_pool import STRUCTURAL_NEGATIVE_SUFFIX
+        from verifier.candidate_pool import (
+            EQUIVALENT_FORM_SUFFIX,
+            STRUCTURAL_NEGATIVE_SUFFIX,
+        )
         from verifier.shortcut_probes import report as report_shortcut_probes
 
         # **读 args.data，不硬编码路径**（code review 发现：硬编码曾经让
@@ -482,10 +480,12 @@ def main() -> int:
         n_rl0 = sum(1 for r in pool if r["label"] and r.get("red_line_guess") == 0)
         n_rl2 = sum(1 for r in pool if r["label"] and r.get("red_line_guess") == 2)
         n_structneg = sum(1 for r in pool if r["case_id"].endswith(STRUCTURAL_NEGATIVE_SUFFIX))
+        n_eqform = sum(1 for r in pool if r["case_id"].endswith(EQUIVALENT_FORM_SUFFIX))
         print(f"候选级训练集 {len(ds)} 条（正例 {n_pos}，{n_pos / len(ds):.1%}"
               f"——红线0 {n_rl0} / 红线2 {n_rl2}；负例 {len(ds) - n_pos}，"
-              f"其中结构性负例 {n_structneg} 条——问题一的修复，打掉"
-              "「括注即违规」这个纯结构捷径）")
+              f"其中 grounded 注入负例 {n_structneg} 条 + 等价形式注入负例 "
+              f"{n_eqform} 条——问题三的修复，打掉「候选落在括注内即违规」"
+              "这个位置捷径）")
         # 绝不只报总体准确率能算出的假象数字——这里只报正负比例，不是准确率，
         # 但仍然按项目纪律把红线0/2分开列，供后续训练配置参考。
         # 退化分类器探针（ticket 17），只打印不改退出码——训练池的探针不设门

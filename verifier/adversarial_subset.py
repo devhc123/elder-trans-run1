@@ -20,9 +20,9 @@ INJECTIONS`——独立第二意见代码审计发现：这样构造出来的对
 **同时混入结构性负例**（第三轮独立审计问题一的修复）：只看答案有没有
 含固定括注模板这一个特征，不读原文，就能在纯正例对抗子集上拿到 100%
 召回/0%误报——现在混入"括注存在但内容真实无害"的负例（`candidate_pool
-.build_structural_negatives`），一个只认结构的分类器在这份对抗子集上
-会被拉回到接近瞎猜的水平，只有真正读懂原文依据关系的分类器才能两类
-都判对。
+.build_injection_negatives`）：grounded 药名注入杀"候选在括注内⇒违规"，
+等价形式注入（原文「3天」→注入「三天」）杀"在括注内 ∧ 非grounded"这个
+合取。只有真正读懂原文依据关系的分类器才能两类都判对。
 
 用法：
     python3 verifier/adversarial_subset.py
@@ -36,7 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from verifier.candidate_pool import build_structural_negatives, load_jargon  # noqa: E402
+from verifier.candidate_pool import build_injection_negatives, load_jargon  # noqa: E402
 from verifier.shortcut_probes import report as report_shortcut_probes  # noqa: E402
 from verifier.synth_minimal_edit import (  # noqa: E402
     synthesize_all,
@@ -47,13 +47,29 @@ WORK = ROOT / "verifier" / "work"
 MIN_SIZE = 50  # L2 判读规则的门槛
 
 
-def build_adversarial_subset(records: list[dict], jargon: set[str] | None = None) -> list[dict]:
+def build_adversarial_subset(
+    records: list[dict], jargon: set[str] | None = None, *,
+    include_equivalent_form: bool = True,
+) -> list[dict]:
+    """holdout 源文本合成的正例 + 两类注入负例（ticket 26）。
+
+    **负例只放注入类，不混普通可信负例。** 两种配比的探针 J 都算过：只放注入
+    负例时"候选在括注内"这条被打到 0（本轮明确要杀的那条），且合取捷径最低；
+    再混普通可信负例会把两个单特征压得更匀，却把合取顶上去。见 ticket 26。
+
+    **按 kind 分别配平**：实体负例对齐实体正例、数字负例对齐数字正例。用一个
+    总数上限截断会让 kind 分布随机倾斜（探针⑦ 盯的就是这个）。
+
+    `include_equivalent_form=False` 是 ticket 25 盲检的降级档——一致率落在
+    90–95% 时等价形式负例只进训练池、不进这份冻结验收集（训练池里混几条错标
+    是稀释，验收集里混几条错标是整个 L2 门槛的数字不可信）。"""
     positives = synthetic_records_to_candidates(synthesize_all(records, holdout=True))
-    # 负例数量对齐正例总数（约1:1，同 train_lora.py 的口径）——不需要
-    # 把可信池里所有 pass 候选都装饰一遍，只要"有没有括注"在这份验收集
-    # 里不再完美区分两类就够了。
-    negatives = build_structural_negatives(
-        records, jargon if jargon is not None else load_jargon(), holdout=True, max_items=len(positives)
+    n_entity = sum(1 for p in positives if p["red_line_guess"] == 0)
+    n_numeric = sum(1 for p in positives if p["red_line_guess"] == 2)
+    negatives = build_injection_negatives(
+        records, jargon if jargon is not None else load_jargon(),
+        max_entity=n_entity,
+        max_equivalent=n_numeric if include_equivalent_form else 0,
     )
     return positives + negatives
 

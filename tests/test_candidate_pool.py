@@ -19,9 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from verifier.candidate_pool import (  # noqa: E402
-    STRUCTURAL_NEGATIVE_FILLERS,
     apply_teacher_labels,
-    build_structural_negatives,
     build_trusted_candidate_pool,
     build_uncertain_candidate_pool,
     load_teacher_candidate_labels,
@@ -133,122 +131,6 @@ def test_each_candidate_carries_source_context_and_kind():
     assert item["source_text"] and item["answer"]
     assert item["kind"] == "digit"
     assert item["red_line_guess"] == 2
-
-
-# ---------- 结构性负例（第三轮独立审计问题一的修复）----------
-#
-# 实测：只看答案有没有含固定括注模板（不读原文、不做任何语义判断）这一个
-# 特征，就能在对抗子集上拿到 100% 召回 / 0% 误报——train/holdout 的合成
-# 正例统一用"答案末尾追加括注"的结构，模型可能只学会认这个结构。
-# `build_structural_negatives` 造"括注存在但内容真实无害"的负例：对
-# verdict=pass 的真实案例，答案后面追加一句不含任何可提取候选的安慰语
-# （复用同样的模板前缀，但填的是不引入新候选的通用内容），让"有没有括注"
-# 这个特征在正负例里都出现，逼模型看内容不看结构。
-
-def test_structural_negative_fillers_contain_no_extractable_candidates():
-    """安慰语本身绝不能意外含数字/中文数词/词表实体——否则会造出新的、
-    未经设计的候选，混淆"这是专门为打掉结构捷径而造的负例"这件事。"""
-    from verifier.redline_candidates import CN_NUMERAL_RE, DIGIT_RE, FRACTION_RE, load_jargon
-
-    jargon = load_jargon()
-    for pool_name, fillers in STRUCTURAL_NEGATIVE_FILLERS.items():
-        for f in fillers:
-            assert not DIGIT_RE.findall(f), f"{pool_name} 安慰语含数字: {f!r}"
-            assert not CN_NUMERAL_RE.findall(f), f"{pool_name} 安慰语含中文数词: {f!r}"
-            assert not FRACTION_RE.findall(f), f"{pool_name} 安慰语含分数: {f!r}"
-            assert not any(w in f for w in jargon), f"{pool_name} 安慰语含词表实体: {f!r}"
-
-
-def test_structural_negative_fillers_share_marker_prefix_with_positive_templates():
-    """安慰语必须复用跟合成正例**相同**的括注前缀（"（补充一句："等），
-    不能自己另起一套不重叠的措辞——否则退化分类器只需要认"这三个具体
-    前缀"，换一套新前缀完全不影响它继续 100% 命中原来的正例，等于没堵。
-
-    前缀元组从 `synth_minimal_edit.TEMPLATE_PREFIXES` 导入，不在这里
-    再手抄一份——`/code-review` 发现原来这里是第三份独立硬编码副本，
-    TEMPLATES 改了措辞、这里忘了同步也不会有任何信号。"""
-    from verifier.synth_minimal_edit import TEMPLATE_PREFIXES
-
-    for fillers in STRUCTURAL_NEGATIVE_FILLERS.values():
-        for f in fillers:
-            assert f.startswith(TEMPLATE_PREFIXES), f"安慰语前缀跟正例模板不重合: {f!r}"
-
-
-def test_structural_negatives_only_apply_to_pass_verdict_cases():
-    fail_record = _record("f1", "请遵医嘱。", "医生给您开的是阿司匹林。", "fail",
-                           red_lines=[(0, True, "阿司匹林"), (1, False, ""), (2, False, "")])
-    out = build_structural_negatives([fail_record], jargon={"阿司匹林"})
-    assert out == []
-
-
-def test_structural_negatives_skipped_when_pass_case_has_no_candidates():
-    """这条 pass 答案本来就没有可信候选可以附着，造出来的负例没有意义。"""
-    r = _record("p1", "阿司匹林每日一片。", "阿司匹林您要每日一片。", "pass")
-    out = build_structural_negatives([r], jargon={"阿司匹林"})
-    assert out == []
-
-
-def test_structural_negatives_reuse_the_pass_case_original_candidates_as_false():
-    r = _record("p1", "本药物用于降压治疗。", "医生给您开的是硝苯地平。", "pass")
-    out = build_structural_negatives([r], jargon={"硝苯地平"})
-    assert len(out) == 1
-    item = out[0]
-    assert item["candidate_text"] == "硝苯地平"
-    assert item["label"] is False
-    assert item["case_id"] == "p1-structneg"
-    # 答案必须真的带上了括注结构（这是重点——制造"有括注但仍是负例"）
-    assert any(item["answer"].endswith(f.rstrip()) or f in item["answer"]
-               for pool in STRUCTURAL_NEGATIVE_FILLERS.values() for f in pool)
-    # 最小编辑：原答案内容必须原样保留
-    assert "医生给您开的是硝苯地平。" in item["answer"]
-
-
-def test_structural_negatives_holdout_flag_uses_disjoint_fillers():
-    r = _record("p1", "本药物用于降压治疗。", "医生给您开的是硝苯地平。", "pass")
-    train_out = build_structural_negatives([r], jargon={"硝苯地平"}, holdout=False)
-    holdout_out = build_structural_negatives([r], jargon={"硝苯地平"}, holdout=True)
-    assert train_out[0]["answer"] != holdout_out[0]["answer"]
-    assert not (set(STRUCTURAL_NEGATIVE_FILLERS["train"]) & set(STRUCTURAL_NEGATIVE_FILLERS["holdout"]))
-
-
-def test_structural_negatives_are_deterministic_across_runs():
-    r = _record("p1", "本药物用于降压治疗。", "医生给您开的是硝苯地平。", "pass")
-    a = build_structural_negatives([r], jargon={"硝苯地平"})
-    b = build_structural_negatives([r], jargon={"硝苯地平"})
-    assert a == b
-
-
-def test_structural_negatives_max_items_never_overshoots_on_multi_candidate_records():
-    """`/code-review` 发现的真 bug：外层 `if len(out) >= max_items: break`
-    每条记录只检查一次，但一条记录可能通过内层循环一次性追加多个候选——
-    卡在刚好差 1 条时，下一条记录如果有 N 个候选会整条超发 N-1 条。
-    实测过：train 全量 + max_items=1015 时返回 1016 条（该顶格记录
-    vt-1536 单条就有 26 个可提取候选，最坏情况会超发到 1040）。裁剪必须
-    是硬上限，不是"差不多"。"""
-    records = [
-        _record("p1", "本药物用于降压治疗，也用于心律失常。",
-                "医生给您开的是硝苯地平和普罗帕酮。", "pass"),  # 2 candidates in one record
-        _record("p2", "本药物用于降压治疗。", "医生给您开的是硝苯地平。", "pass"),
-    ]
-    out = build_structural_negatives(records, jargon={"硝苯地平", "普罗帕酮"}, max_items=1)
-    assert len(out) == 1
-
-
-def test_structural_negatives_max_items_caps_output_deterministically():
-    """全量装饰会把正例占比再腰斩、逼近 ticket 09/11 坍缩过的区间——
-    `max_items` 让调用方把结构性负例数量对齐正例总数（约1:1），不需要
-    每条 pass 候选都装饰一遍。裁剪必须确定性（按 case_id 排序取前 N），
-    不能是"随便丢几条"。"""
-    records = [
-        _record(f"p{i}", "本药物用于降压治疗。", "医生给您开的是硝苯地平。", "pass")
-        for i in range(10)
-    ]
-    out_capped = build_structural_negatives(records, jargon={"硝苯地平"}, max_items=3)
-    assert len(out_capped) == 3
-    out_uncapped = build_structural_negatives(records, jargon={"硝苯地平"})
-    assert len(out_uncapped) == 10
-    # 裁剪结果必须是未裁剪结果按确定性顺序的前缀
-    assert out_capped == out_uncapped[:3]
 
 
 # ---------- 不确定候选池（第三轮独立审计问题二的修复第一步）----------
@@ -449,3 +331,60 @@ def test_sampling_is_deterministic_under_exclusion():
     b = sample_uncertain_candidates(pool, n=5, prefix="u2", exclude=ex)
     assert [x["id"] for x in a] == [x["id"] for x in b]
     assert [x["candidate_text"] for x in a] == [x["candidate_text"] for x in b]
+
+
+# ---------- 注入负例重写（ticket 26） ----------
+
+def _pass_rec(case_id, source, answer):
+    return {"case_id": case_id,
+            "input": f"【原文】\n{source}\n\n【回答】\n{answer}\n\n【要点】\n0. x",
+            "output": '{"key_points": [], "red_lines": [], "verdict": "pass"}'}
+
+
+def test_injection_negatives_carry_distinct_suffixes_per_flavor():
+    """两类负例难度差很多（grounded 是字符串查表就能做对，等价形式要真读懂），
+    验收要分开报误报率——靠 case_id 后缀区分，两个后缀都是常量、不写字面量。"""
+    from verifier.candidate_pool import (EQUIVALENT_FORM_SUFFIX, STRUCTURAL_NEGATIVE_SUFFIX,
+                                         build_injection_negatives)
+    recs = [_pass_rec("c1", "本品为甲硝唑片，连续用药不超过3天。", "请遵医嘱服药。")]
+    out = build_injection_negatives(recs, {"甲硝唑"})
+    suffixes = {it["case_id"].rsplit("-", 1)[-1] for it in out}
+    assert suffixes <= {STRUCTURAL_NEGATIVE_SUFFIX.lstrip("-"), EQUIVALENT_FORM_SUFFIX.lstrip("-")}
+    assert all(it["label"] is False for it in out)
+
+
+def test_injection_negatives_respect_per_flavor_caps():
+    """两类要能**分别**配平——等价形式全是数字类，实体全是词表类，用一个总数
+    上限截断会让 kind 分布随机倾斜。"""
+    from verifier.candidate_pool import build_injection_negatives
+    recs = [_pass_rec(f"c{i}", "本品为甲硝唑片，连续用药不超过3天。", "请遵医嘱。")
+            for i in range(10)]
+    out = build_injection_negatives(recs, {"甲硝唑"}, max_entity=3, max_equivalent=2)
+    assert sum(1 for it in out if it["kind"] == "lexicon") == 3
+    assert sum(1 for it in out if it["kind"] == "cn_numeral") == 2
+
+
+def test_injection_negatives_are_deterministic():
+    from verifier.candidate_pool import build_injection_negatives
+    recs = [_pass_rec(f"c{i}", "本品为甲硝唑片，连续用药不超过3天。", "请遵医嘱。")
+            for i in range(10)]
+    a = build_injection_negatives(recs, {"甲硝唑"}, max_entity=4, max_equivalent=4)
+    b = build_injection_negatives(recs, {"甲硝唑"}, max_entity=4, max_equivalent=4)
+    assert [x["case_id"] for x in a] == [x["case_id"] for x in b]
+    assert [x["candidate_text"] for x in a] == [x["candidate_text"] for x in b]
+
+
+def test_injection_negatives_only_touch_pass_cases():
+    """fail 案例的答案里本来就有真违规，往上面再叠注入会让标签失去意义。"""
+    from verifier.candidate_pool import build_injection_negatives
+    fail = {"case_id": "f1",
+            "input": "【原文】\n本品为甲硝唑片。\n\n【回答】\n请遵医嘱。\n\n【要点】\n0. x",
+            "output": '{"key_points": [], "red_lines": [], "verdict": "fail"}'}
+    assert build_injection_negatives([fail], {"甲硝唑"}) == []
+
+
+def test_zero_candidate_fillers_are_gone():
+    """零候选安慰语被两类注入负例取代。留着它只会让"括注里没有候选"重新成为
+    一个可学特征——那正是 ticket 17 探针抓出来的位置捷径的来源。"""
+    import verifier.candidate_pool as cp
+    assert not hasattr(cp, "STRUCTURAL_NEGATIVE_FILLERS")
