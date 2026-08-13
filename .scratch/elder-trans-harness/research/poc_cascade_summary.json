@@ -1,0 +1,57 @@
+[
+ {
+  "model": "qwen3.5:0.8b",
+  "solo_miss": 0.975,
+  "solo_fp": 0.275,
+  "solo_sec": 0.5818979740142822,
+  "parse_fail": 0,
+  "cascade_miss": 0.975,
+  "cascade_fp": 0.15,
+  "send_rate": 0.15,
+  "cascade_sec": 1.0753979740142823
+ },
+ {
+  "model": "openbmb/minicpm5:latest",
+  "solo_miss": 0.075,
+  "solo_fp": 0.8,
+  "solo_sec": 0.4201087951660156,
+  "parse_fail": 0,
+  "cascade_miss": 0.125,
+  "cascade_fp": 0.3,
+  "send_rate": 0.8625,
+  "cascade_sec": 3.2577337951660157
+ },
+ {
+  "model": "minicpm-v4.6:1b",
+  "solo_miss": 0.375,
+  "solo_fp": 0.8,
+  "solo_sec": 0.5562810897827148,
+  "parse_fail": 0,
+  "cascade_miss": 0.42500000000000004,
+  "cascade_fp": 0.325,
+  "send_rate": 0.7125,
+  "cascade_sec": 2.900406089782715
+ },
+ {
+  "model": "medgemma:4b",
+  "solo_miss": 0.8,
+  "solo_fp": 0.1,
+  "solo_sec": 2.514833927154541,
+  "parse_fail": 0,
+  "cascade_miss": 0.8,
+  "cascade_fp": 0.0,
+  "send_rate": 0.15,
+  "cascade_sec": 3.008333927154541
+ },
+ {
+  "model": "chenhaodev/med-guard:latest",
+  "solo_miss": 1.0,
+  "solo_fp": 0.0,
+  "solo_sec": 0.5049149990081787,
+  "parse_fail": 80,
+  "cascade_miss": 1.0,
+  "cascade_fp": 0.0,
+  "send_rate": 0.0,
+  "cascade_sec": 0.5049149990081787
+ }
+]

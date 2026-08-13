@@ -1,0 +1,1922 @@
+[
+ {
+  "id": "vt-1243::15",
+  "label": true,
+  "red_line_guess": 2,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.8445849418640137,
+  "reasoning_tokens": 62,
+  "usage": {
+   "prompt_tokens": 780,
+   "completion_tokens": 69,
+   "total_tokens": 849,
+   "prompt_tokens_details": {
+    "cached_tokens": 768
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 62
+   },
+   "prompt_cache_hit_tokens": 768,
+   "prompt_cache_miss_tokens": 12
+  }
+ },
+ {
+  "id": "vt-0211::6",
+  "label": true,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 4.208669900894165,
+  "reasoning_tokens": 161,
+  "usage": {
+   "prompt_tokens": 1632,
+   "completion_tokens": 168,
+   "total_tokens": 1800,
+   "prompt_tokens_details": {
+    "cached_tokens": 1536
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 161
+   },
+   "prompt_cache_hit_tokens": 1536,
+   "prompt_cache_miss_tokens": 96
+  }
+ },
+ {
+  "id": "vt-0098::7",
+  "label": true,
+  "red_line_guess": 2,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.742666006088257,
+  "reasoning_tokens": 53,
+  "usage": {
+   "prompt_tokens": 673,
+   "completion_tokens": 60,
+   "total_tokens": 733,
+   "prompt_tokens_details": {
+    "cached_tokens": 640
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 53
+   },
+   "prompt_cache_hit_tokens": 640,
+   "prompt_cache_miss_tokens": 33
+  }
+ },
+ {
+  "id": "vt-1162::阿司匹林",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.948690176010132,
+  "reasoning_tokens": 102,
+  "usage": {
+   "prompt_tokens": 773,
+   "completion_tokens": 109,
+   "total_tokens": 882,
+   "prompt_tokens_details": {
+    "cached_tokens": 768
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 102
+   },
+   "prompt_cache_hit_tokens": 768,
+   "prompt_cache_miss_tokens": 5
+  }
+ },
+ {
+  "id": "vt-1059::鸡蛋",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.9747562408447266,
+  "reasoning_tokens": 119,
+  "usage": {
+   "prompt_tokens": 1255,
+   "completion_tokens": 126,
+   "total_tokens": 1381,
+   "prompt_tokens_details": {
+    "cached_tokens": 1152
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 119
+   },
+   "prompt_cache_hit_tokens": 1152,
+   "prompt_cache_miss_tokens": 103
+  }
+ },
+ {
+  "id": "vt-0932::稀饭",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.1057910919189453,
+  "reasoning_tokens": 94,
+  "usage": {
+   "prompt_tokens": 1794,
+   "completion_tokens": 101,
+   "total_tokens": 1895,
+   "prompt_tokens_details": {
+    "cached_tokens": 1792
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 94
+   },
+   "prompt_cache_hit_tokens": 1792,
+   "prompt_cache_miss_tokens": 2
+  }
+ },
+ {
+  "id": "vt-0279::氢氧化铝凝胶",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.469862222671509,
+  "reasoning_tokens": 135,
+  "usage": {
+   "prompt_tokens": 671,
+   "completion_tokens": 142,
+   "total_tokens": 813,
+   "prompt_tokens_details": {
+    "cached_tokens": 640
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 135
+   },
+   "prompt_cache_hit_tokens": 640,
+   "prompt_cache_miss_tokens": 31
+  }
+ },
+ {
+  "id": "vt-0470::一粒",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.717711925506592,
+  "reasoning_tokens": 63,
+  "usage": {
+   "prompt_tokens": 1078,
+   "completion_tokens": 70,
+   "total_tokens": 1148,
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 63
+   },
+   "prompt_cache_hit_tokens": 1024,
+   "prompt_cache_miss_tokens": 54
+  }
+ },
+ {
+  "id": "vt-0691::庆大霉素",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.2930233478546143,
+  "reasoning_tokens": 115,
+  "usage": {
+   "prompt_tokens": 1349,
+   "completion_tokens": 122,
+   "total_tokens": 1471,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 115
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 69
+  }
+ },
+ {
+  "id": "vt-0852::胃舒平",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.2445037364959717,
+  "reasoning_tokens": 114,
+  "usage": {
+   "prompt_tokens": 814,
+   "completion_tokens": 121,
+   "total_tokens": 935,
+   "prompt_tokens_details": {
+    "cached_tokens": 768
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 114
+   },
+   "prompt_cache_hit_tokens": 768,
+   "prompt_cache_miss_tokens": 46
+  }
+ },
+ {
+  "id": "vt-0141::氢氯噻嗪",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": null,
+  "raw": "",
+  "finish": "stop",
+  "seconds": 2.049940347671509,
+  "reasoning_tokens": 6,
+  "usage": {
+   "prompt_tokens": 1531,
+   "completion_tokens": 6,
+   "total_tokens": 1537,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 6
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 123
+  }
+ },
+ {
+  "id": "vt-1171::依那普利",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.4220468997955322,
+  "reasoning_tokens": 125,
+  "usage": {
+   "prompt_tokens": 1258,
+   "completion_tokens": 132,
+   "total_tokens": 1390,
+   "prompt_tokens_details": {
+    "cached_tokens": 1152
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 125
+   },
+   "prompt_cache_hit_tokens": 1152,
+   "prompt_cache_miss_tokens": 106
+  }
+ },
+ {
+  "id": "vt-0773::布洛芬",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.9180667400360107,
+  "reasoning_tokens": 181,
+  "usage": {
+   "prompt_tokens": 1402,
+   "completion_tokens": 188,
+   "total_tokens": 1590,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 181
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 122
+  }
+ },
+ {
+  "id": "vt-1996::双氯芬酸钠",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.7299089431762695,
+  "reasoning_tokens": 145,
+  "usage": {
+   "prompt_tokens": 1005,
+   "completion_tokens": 152,
+   "total_tokens": 1157,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 145
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 109
+  }
+ },
+ {
+  "id": "vt-0789::阿莫西林",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.208099126815796,
+  "reasoning_tokens": 104,
+  "usage": {
+   "prompt_tokens": 1047,
+   "completion_tokens": 111,
+   "total_tokens": 1158,
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 104
+   },
+   "prompt_cache_hit_tokens": 1024,
+   "prompt_cache_miss_tokens": 23
+  }
+ },
+ {
+  "id": "vt-0905::鸡蛋",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.092115879058838,
+  "reasoning_tokens": 93,
+  "usage": {
+   "prompt_tokens": 1583,
+   "completion_tokens": 100,
+   "total_tokens": 1683,
+   "prompt_tokens_details": {
+    "cached_tokens": 1536
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 93
+   },
+   "prompt_cache_hit_tokens": 1536,
+   "prompt_cache_miss_tokens": 47
+  }
+ },
+ {
+  "id": "vt-0287::缬沙坦",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.774653196334839,
+  "reasoning_tokens": 85,
+  "usage": {
+   "prompt_tokens": 1105,
+   "completion_tokens": 92,
+   "total_tokens": 1197,
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 85
+   },
+   "prompt_cache_hit_tokens": 1024,
+   "prompt_cache_miss_tokens": 81
+  }
+ },
+ {
+  "id": "vt-0229::地高辛",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.2304821014404297,
+  "reasoning_tokens": 143,
+  "usage": {
+   "prompt_tokens": 1542,
+   "completion_tokens": 150,
+   "total_tokens": 1692,
+   "prompt_tokens_details": {
+    "cached_tokens": 1536
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 143
+   },
+   "prompt_cache_hit_tokens": 1536,
+   "prompt_cache_miss_tokens": 6
+  }
+ },
+ {
+  "id": "vt-0633::泼尼松",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.504012107849121,
+  "reasoning_tokens": 138,
+  "usage": {
+   "prompt_tokens": 1159,
+   "completion_tokens": 145,
+   "total_tokens": 1304,
+   "prompt_tokens_details": {
+    "cached_tokens": 1152
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 138
+   },
+   "prompt_cache_hit_tokens": 1152,
+   "prompt_cache_miss_tokens": 7
+  }
+ },
+ {
+  "id": "vt-0189::心痛定",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 19.812540769577026,
+  "reasoning_tokens": 1747,
+  "usage": {
+   "prompt_tokens": 1585,
+   "completion_tokens": 1754,
+   "total_tokens": 3339,
+   "prompt_tokens_details": {
+    "cached_tokens": 1536
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 1747
+   },
+   "prompt_cache_hit_tokens": 1536,
+   "prompt_cache_miss_tokens": 49
+  }
+ },
+ {
+  "id": "vt-0491::出冷汗",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.4858381748199463,
+  "reasoning_tokens": 94,
+  "usage": {
+   "prompt_tokens": 1377,
+   "completion_tokens": 101,
+   "total_tokens": 1478,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 94
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 97
+  }
+ },
+ {
+  "id": "vt-0834::克拉霉素",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 4.476222991943359,
+  "reasoning_tokens": 242,
+  "usage": {
+   "prompt_tokens": 1325,
+   "completion_tokens": 249,
+   "total_tokens": 1574,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 242
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 45
+  }
+ },
+ {
+  "id": "vt-0435::两小时",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.9883840084075928,
+  "reasoning_tokens": 190,
+  "usage": {
+   "prompt_tokens": 751,
+   "completion_tokens": 197,
+   "total_tokens": 948,
+   "prompt_tokens_details": {
+    "cached_tokens": 640
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 190
+   },
+   "prompt_cache_hit_tokens": 640,
+   "prompt_cache_miss_tokens": 111
+  }
+ },
+ {
+  "id": "vt-1394::精神病",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.651624917984009,
+  "reasoning_tokens": 149,
+  "usage": {
+   "prompt_tokens": 833,
+   "completion_tokens": 156,
+   "total_tokens": 989,
+   "prompt_tokens_details": {
+    "cached_tokens": 768
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 149
+   },
+   "prompt_cache_hit_tokens": 768,
+   "prompt_cache_miss_tokens": 65
+  }
+ },
+ {
+  "id": "vt-0662::苯巴比妥",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": null,
+  "raw": "",
+  "finish": "stop",
+  "seconds": 2.2685279846191406,
+  "reasoning_tokens": 6,
+  "usage": {
+   "prompt_tokens": 1460,
+   "completion_tokens": 6,
+   "total_tokens": 1466,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 6
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 52
+  }
+ },
+ {
+  "id": "vt-0965::瘦肉",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.774868965148926,
+  "reasoning_tokens": 194,
+  "usage": {
+   "prompt_tokens": 1248,
+   "completion_tokens": 201,
+   "total_tokens": 1449,
+   "prompt_tokens_details": {
+    "cached_tokens": 1152
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 194
+   },
+   "prompt_cache_hit_tokens": 1152,
+   "prompt_cache_miss_tokens": 96
+  }
+ },
+ {
+  "id": "vt-1002::双氯芬酸钠",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.878049850463867,
+  "reasoning_tokens": 79,
+  "usage": {
+   "prompt_tokens": 1179,
+   "completion_tokens": 86,
+   "total_tokens": 1265,
+   "prompt_tokens_details": {
+    "cached_tokens": 1152
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 79
+   },
+   "prompt_cache_hit_tokens": 1152,
+   "prompt_cache_miss_tokens": 27
+  }
+ },
+ {
+  "id": "vt-0183::甲氨蝶呤",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.2951338291168213,
+  "reasoning_tokens": 136,
+  "usage": {
+   "prompt_tokens": 864,
+   "completion_tokens": 143,
+   "total_tokens": 1007,
+   "prompt_tokens_details": {
+    "cached_tokens": 768
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 136
+   },
+   "prompt_cache_hit_tokens": 768,
+   "prompt_cache_miss_tokens": 96
+  }
+ },
+ {
+  "id": "vt-1171::阿司匹林",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.0816221237182617,
+  "reasoning_tokens": 87,
+  "usage": {
+   "prompt_tokens": 1258,
+   "completion_tokens": 94,
+   "total_tokens": 1352,
+   "prompt_tokens_details": {
+    "cached_tokens": 1152
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 87
+   },
+   "prompt_cache_hit_tokens": 1152,
+   "prompt_cache_miss_tokens": 106
+  }
+ },
+ {
+  "id": "vt-1622::华法林",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.2517340183258057,
+  "reasoning_tokens": 114,
+  "usage": {
+   "prompt_tokens": 1235,
+   "completion_tokens": 121,
+   "total_tokens": 1356,
+   "prompt_tokens_details": {
+    "cached_tokens": 1152
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 114
+   },
+   "prompt_cache_hit_tokens": 1152,
+   "prompt_cache_miss_tokens": 83
+  }
+ },
+ {
+  "id": "vt-0789::气管炎",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.238161325454712,
+  "reasoning_tokens": 142,
+  "usage": {
+   "prompt_tokens": 1045,
+   "completion_tokens": 149,
+   "total_tokens": 1194,
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 142
+   },
+   "prompt_cache_hit_tokens": 1024,
+   "prompt_cache_miss_tokens": 21
+  }
+ },
+ {
+  "id": "vt-0435::半小时",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.8111696243286133,
+  "reasoning_tokens": 68,
+  "usage": {
+   "prompt_tokens": 750,
+   "completion_tokens": 75,
+   "total_tokens": 825,
+   "prompt_tokens_details": {
+    "cached_tokens": 640
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 68
+   },
+   "prompt_cache_hit_tokens": 640,
+   "prompt_cache_miss_tokens": 110
+  }
+ },
+ {
+  "id": "vt-0141::心脏病",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 4.617522954940796,
+  "reasoning_tokens": 287,
+  "usage": {
+   "prompt_tokens": 1527,
+   "completion_tokens": 294,
+   "total_tokens": 1821,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 287
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 119
+  }
+ },
+ {
+  "id": "vt-0202::格列本脲",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.352640151977539,
+  "reasoning_tokens": 109,
+  "usage": {
+   "prompt_tokens": 1379,
+   "completion_tokens": 116,
+   "total_tokens": 1495,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 109
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 99
+  }
+ },
+ {
+  "id": "vt-0773::双氯芬酸钠",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.704450845718384,
+  "reasoning_tokens": 68,
+  "usage": {
+   "prompt_tokens": 1403,
+   "completion_tokens": 75,
+   "total_tokens": 1478,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 68
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 123
+  }
+ },
+ {
+  "id": "vt-0487::肺结核",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 4.497626066207886,
+  "reasoning_tokens": 266,
+  "usage": {
+   "prompt_tokens": 1002,
+   "completion_tokens": 273,
+   "total_tokens": 1275,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 266
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 106
+  }
+ },
+ {
+  "id": "vt-0218::低血糖",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.0167768001556396,
+  "reasoning_tokens": 85,
+  "usage": {
+   "prompt_tokens": 1812,
+   "completion_tokens": 92,
+   "total_tokens": 1904,
+   "prompt_tokens_details": {
+    "cached_tokens": 1792
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 85
+   },
+   "prompt_cache_hit_tokens": 1792,
+   "prompt_cache_miss_tokens": 20
+  }
+ },
+ {
+  "id": "vt-1038::水果",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.743577003479004,
+  "reasoning_tokens": 69,
+  "usage": {
+   "prompt_tokens": 1519,
+   "completion_tokens": 76,
+   "total_tokens": 1595,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 69
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 111
+  }
+ },
+ {
+  "id": "vt-0905::鱼肉",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.076542854309082,
+  "reasoning_tokens": 84,
+  "usage": {
+   "prompt_tokens": 1583,
+   "completion_tokens": 91,
+   "total_tokens": 1674,
+   "prompt_tokens_details": {
+    "cached_tokens": 1536
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 84
+   },
+   "prompt_cache_hit_tokens": 1536,
+   "prompt_cache_miss_tokens": 47
+  }
+ },
+ {
+  "id": "vt-0646::铝碳酸镁",
+  "label": true,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.6559832096099854,
+  "reasoning_tokens": 153,
+  "usage": {
+   "prompt_tokens": 1969,
+   "completion_tokens": 160,
+   "total_tokens": 2129,
+   "prompt_tokens_details": {
+    "cached_tokens": 1920
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 153
+   },
+   "prompt_cache_hit_tokens": 1920,
+   "prompt_cache_miss_tokens": 49
+  }
+ },
+ {
+  "id": "vt-1335::4",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.624408721923828,
+  "reasoning_tokens": 151,
+  "usage": {
+   "prompt_tokens": 827,
+   "completion_tokens": 158,
+   "total_tokens": 985,
+   "prompt_tokens_details": {
+    "cached_tokens": 768
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 151
+   },
+   "prompt_cache_hit_tokens": 768,
+   "prompt_cache_miss_tokens": 59
+  }
+ },
+ {
+  "id": "vt-1998::3",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.874882936477661,
+  "reasoning_tokens": 55,
+  "usage": {
+   "prompt_tokens": 1363,
+   "completion_tokens": 62,
+   "total_tokens": 1425,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 55
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 83
+  }
+ },
+ {
+  "id": "vt-0218::4",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 5.54775071144104,
+  "reasoning_tokens": 314,
+  "usage": {
+   "prompt_tokens": 1811,
+   "completion_tokens": 321,
+   "total_tokens": 2132,
+   "prompt_tokens_details": {
+    "cached_tokens": 1792
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 314
+   },
+   "prompt_cache_hit_tokens": 1792,
+   "prompt_cache_miss_tokens": 19
+  }
+ },
+ {
+  "id": "vt-1286::7",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 5.31144118309021,
+  "reasoning_tokens": 297,
+  "usage": {
+   "prompt_tokens": 1449,
+   "completion_tokens": 304,
+   "total_tokens": 1753,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 297
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 41
+  }
+ },
+ {
+  "id": "vt-0688::2",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 10.41172194480896,
+  "reasoning_tokens": 868,
+  "usage": {
+   "prompt_tokens": 1465,
+   "completion_tokens": 875,
+   "total_tokens": 2340,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 868
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 57
+  }
+ },
+ {
+  "id": "vt-0971::3",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.957846164703369,
+  "reasoning_tokens": 110,
+  "usage": {
+   "prompt_tokens": 1038,
+   "completion_tokens": 117,
+   "total_tokens": 1155,
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 110
+   },
+   "prompt_cache_hit_tokens": 1024,
+   "prompt_cache_miss_tokens": 14
+  }
+ },
+ {
+  "id": "vt-1073::1",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 7.863335847854614,
+  "reasoning_tokens": 448,
+  "usage": {
+   "prompt_tokens": 2128,
+   "completion_tokens": 455,
+   "total_tokens": 2583,
+   "prompt_tokens_details": {
+    "cached_tokens": 2048
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 448
+   },
+   "prompt_cache_hit_tokens": 2048,
+   "prompt_cache_miss_tokens": 80
+  }
+ },
+ {
+  "id": "vt-1534::1",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.7063350677490234,
+  "reasoning_tokens": 169,
+  "usage": {
+   "prompt_tokens": 1005,
+   "completion_tokens": 176,
+   "total_tokens": 1181,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 169
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 109
+  }
+ },
+ {
+  "id": "vt-0766::3",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": true,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 4.281327724456787,
+  "reasoning_tokens": 179,
+  "usage": {
+   "prompt_tokens": 990,
+   "completion_tokens": 186,
+   "total_tokens": 1176,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 179
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 94
+  }
+ },
+ {
+  "id": "vt-0948::克林霉素磷酸酯",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": null,
+  "raw": "",
+  "finish": "stop",
+  "seconds": 2.0892088413238525,
+  "reasoning_tokens": 6,
+  "usage": {
+   "prompt_tokens": 1051,
+   "completion_tokens": 6,
+   "total_tokens": 1057,
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 6
+   },
+   "prompt_cache_hit_tokens": 1024,
+   "prompt_cache_miss_tokens": 27
+  }
+ },
+ {
+  "id": "vt-1243::寄生虫病",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.7939460277557373,
+  "reasoning_tokens": 82,
+  "usage": {
+   "prompt_tokens": 781,
+   "completion_tokens": 89,
+   "total_tokens": 870,
+   "prompt_tokens_details": {
+    "cached_tokens": 768
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 82
+   },
+   "prompt_cache_hit_tokens": 768,
+   "prompt_cache_miss_tokens": 13
+  }
+ },
+ {
+  "id": "vt-0125::脑出血",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.3507018089294434,
+  "reasoning_tokens": 43,
+  "usage": {
+   "prompt_tokens": 586,
+   "completion_tokens": 50,
+   "total_tokens": 636,
+   "prompt_tokens_details": {
+    "cached_tokens": 512
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 43
+   },
+   "prompt_cache_hit_tokens": 512,
+   "prompt_cache_miss_tokens": 74
+  }
+ },
+ {
+  "id": "vt-0045::胞磷胆碱钠",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 4.290929794311523,
+  "reasoning_tokens": 125,
+  "usage": {
+   "prompt_tokens": 488,
+   "completion_tokens": 132,
+   "total_tokens": 620,
+   "prompt_tokens_details": {
+    "cached_tokens": 384
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 125
+   },
+   "prompt_cache_hit_tokens": 384,
+   "prompt_cache_miss_tokens": 104
+  }
+ },
+ {
+  "id": "vt-1587::细菌感染",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 4.266365051269531,
+  "reasoning_tokens": 204,
+  "usage": {
+   "prompt_tokens": 724,
+   "completion_tokens": 211,
+   "total_tokens": 935,
+   "prompt_tokens_details": {
+    "cached_tokens": 640
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 204
+   },
+   "prompt_cache_hit_tokens": 640,
+   "prompt_cache_miss_tokens": 84
+  }
+ },
+ {
+  "id": "vt-1779::脊髓火器伤",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 3.7496659755706787,
+  "reasoning_tokens": 189,
+  "usage": {
+   "prompt_tokens": 583,
+   "completion_tokens": 196,
+   "total_tokens": 779,
+   "prompt_tokens_details": {
+    "cached_tokens": 512
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 189
+   },
+   "prompt_cache_hit_tokens": 512,
+   "prompt_cache_miss_tokens": 71
+  }
+ },
+ {
+  "id": "vt-0549::一天",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.259620189666748,
+  "reasoning_tokens": 126,
+  "usage": {
+   "prompt_tokens": 1016,
+   "completion_tokens": 133,
+   "total_tokens": 1149,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 126
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 120
+  }
+ },
+ {
+  "id": "vt-0817::一天",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 3.5109729766845703,
+  "reasoning_tokens": 154,
+  "usage": {
+   "prompt_tokens": 1817,
+   "completion_tokens": 161,
+   "total_tokens": 1978,
+   "prompt_tokens_details": {
+    "cached_tokens": 1792
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 154
+   },
+   "prompt_cache_hit_tokens": 1792,
+   "prompt_cache_miss_tokens": 25
+  }
+ },
+ {
+  "id": "vt-0059::一个月",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.4818308353424072,
+  "reasoning_tokens": 42,
+  "usage": {
+   "prompt_tokens": 577,
+   "completion_tokens": 49,
+   "total_tokens": 626,
+   "prompt_tokens_details": {
+    "cached_tokens": 512
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 42
+   },
+   "prompt_cache_hit_tokens": 512,
+   "prompt_cache_miss_tokens": 65
+  }
+ },
+ {
+  "id": "vt-0498::盐酸雷莫司琼",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.972101926803589,
+  "reasoning_tokens": 85,
+  "usage": {
+   "prompt_tokens": 822,
+   "completion_tokens": 92,
+   "total_tokens": 914,
+   "prompt_tokens_details": {
+    "cached_tokens": 768
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 85
+   },
+   "prompt_cache_hit_tokens": 768,
+   "prompt_cache_miss_tokens": 54
+  }
+ },
+ {
+  "id": "vt-1176::胃溃疡",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 12.263779163360596,
+  "reasoning_tokens": 1027,
+  "usage": {
+   "prompt_tokens": 833,
+   "completion_tokens": 1034,
+   "total_tokens": 1867,
+   "prompt_tokens_details": {
+    "cached_tokens": 768
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 1027
+   },
+   "prompt_cache_hit_tokens": 768,
+   "prompt_cache_miss_tokens": 65
+  }
+ },
+ {
+  "id": "vt-1498::豆制品",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.6424221992492676,
+  "reasoning_tokens": 74,
+  "usage": {
+   "prompt_tokens": 921,
+   "completion_tokens": 81,
+   "total_tokens": 1002,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 74
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 25
+  }
+ },
+ {
+  "id": "vt-0980::氨茶碱",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.8826639652252197,
+  "reasoning_tokens": 161,
+  "usage": {
+   "prompt_tokens": 958,
+   "completion_tokens": 168,
+   "total_tokens": 1126,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 161
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 62
+  }
+ },
+ {
+  "id": "vt-0365::花生",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.744718074798584,
+  "reasoning_tokens": 56,
+  "usage": {
+   "prompt_tokens": 1554,
+   "completion_tokens": 63,
+   "total_tokens": 1617,
+   "prompt_tokens_details": {
+    "cached_tokens": 1536
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 56
+   },
+   "prompt_cache_hit_tokens": 1536,
+   "prompt_cache_miss_tokens": 18
+  }
+ },
+ {
+  "id": "vt-1109::牙龈出血",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.6261749267578125,
+  "reasoning_tokens": 161,
+  "usage": {
+   "prompt_tokens": 1352,
+   "completion_tokens": 168,
+   "total_tokens": 1520,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 161
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 72
+  }
+ },
+ {
+  "id": "vt-0403::大腿肌",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 3.335314989089966,
+  "reasoning_tokens": 156,
+  "usage": {
+   "prompt_tokens": 1687,
+   "completion_tokens": 163,
+   "total_tokens": 1850,
+   "prompt_tokens_details": {
+    "cached_tokens": 1664
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 156
+   },
+   "prompt_cache_hit_tokens": 1664,
+   "prompt_cache_miss_tokens": 23
+  }
+ },
+ {
+  "id": "vt-0231::一天",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 2.8301520347595215,
+  "reasoning_tokens": 89,
+  "usage": {
+   "prompt_tokens": 1265,
+   "completion_tokens": 96,
+   "total_tokens": 1361,
+   "prompt_tokens_details": {
+    "cached_tokens": 1152
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 89
+   },
+   "prompt_cache_hit_tokens": 1152,
+   "prompt_cache_miss_tokens": 113
+  }
+ },
+ {
+  "id": "vt-0277::一次",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 3.0469160079956055,
+  "reasoning_tokens": 98,
+  "usage": {
+   "prompt_tokens": 1056,
+   "completion_tokens": 105,
+   "total_tokens": 1161,
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 98
+   },
+   "prompt_cache_hit_tokens": 1024,
+   "prompt_cache_miss_tokens": 32
+  }
+ },
+ {
+  "id": "vt-0733::水果",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.770448923110962,
+  "reasoning_tokens": 173,
+  "usage": {
+   "prompt_tokens": 1044,
+   "completion_tokens": 180,
+   "total_tokens": 1224,
+   "prompt_tokens_details": {
+    "cached_tokens": 1024
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 173
+   },
+   "prompt_cache_hit_tokens": 1024,
+   "prompt_cache_miss_tokens": 20
+  }
+ },
+ {
+  "id": "vt-1554::流口水",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.4817888736724854,
+  "reasoning_tokens": 43,
+  "usage": {
+   "prompt_tokens": 995,
+   "completion_tokens": 50,
+   "total_tokens": 1045,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 43
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 99
+  }
+ },
+ {
+  "id": "vt-0441::2",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 5.733242034912109,
+  "reasoning_tokens": 322,
+  "usage": {
+   "prompt_tokens": 1487,
+   "completion_tokens": 329,
+   "total_tokens": 1816,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 322
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 79
+  }
+ },
+ {
+  "id": "vt-1836::一天",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.9486441612243652,
+  "reasoning_tokens": 129,
+  "usage": {
+   "prompt_tokens": 1365,
+   "completion_tokens": 136,
+   "total_tokens": 1501,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 129
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 85
+  }
+ },
+ {
+  "id": "vt-1982::肾结石",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.7886271476745605,
+  "reasoning_tokens": 78,
+  "usage": {
+   "prompt_tokens": 929,
+   "completion_tokens": 85,
+   "total_tokens": 1014,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 78
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 33
+  }
+ },
+ {
+  "id": "vt-1133::两个月",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.5063741207122803,
+  "reasoning_tokens": 50,
+  "usage": {
+   "prompt_tokens": 1312,
+   "completion_tokens": 57,
+   "total_tokens": 1369,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 50
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 32
+  }
+ },
+ {
+  "id": "vt-0932::4",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 4.6949849128723145,
+  "reasoning_tokens": 269,
+  "usage": {
+   "prompt_tokens": 1793,
+   "completion_tokens": 276,
+   "total_tokens": 2069,
+   "prompt_tokens_details": {
+    "cached_tokens": 1792
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 269
+   },
+   "prompt_cache_hit_tokens": 1792,
+   "prompt_cache_miss_tokens": 1
+  }
+ },
+ {
+  "id": "vt-2020::心脏病",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 7.204215049743652,
+  "reasoning_tokens": 484,
+  "usage": {
+   "prompt_tokens": 991,
+   "completion_tokens": 491,
+   "total_tokens": 1482,
+   "prompt_tokens_details": {
+    "cached_tokens": 896
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 484
+   },
+   "prompt_cache_hit_tokens": 896,
+   "prompt_cache_miss_tokens": 95
+  }
+ },
+ {
+  "id": "vt-0216::口腔病",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 5.59867787361145,
+  "reasoning_tokens": 300,
+  "usage": {
+   "prompt_tokens": 1391,
+   "completion_tokens": 307,
+   "total_tokens": 1698,
+   "prompt_tokens_details": {
+    "cached_tokens": 1280
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 300
+   },
+   "prompt_cache_hit_tokens": 1280,
+   "prompt_cache_miss_tokens": 111
+  }
+ },
+ {
+  "id": "vt-1140::120",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 3.228347063064575,
+  "reasoning_tokens": 98,
+  "usage": {
+   "prompt_tokens": 1494,
+   "completion_tokens": 105,
+   "total_tokens": 1599,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 98
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 86
+  }
+ },
+ {
+  "id": "vt-1406::细菌性阴道炎",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": true,
+  "raw": "{\"violated\": true}",
+  "finish": "stop",
+  "seconds": 10.041924238204956,
+  "reasoning_tokens": 885,
+  "usage": {
+   "prompt_tokens": 652,
+   "completion_tokens": 892,
+   "total_tokens": 1544,
+   "prompt_tokens_details": {
+    "cached_tokens": 640
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 885
+   },
+   "prompt_cache_hit_tokens": 640,
+   "prompt_cache_miss_tokens": 12
+  }
+ },
+ {
+  "id": "vt-1870::140",
+  "label": false,
+  "red_line_guess": 2,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 5.830209970474243,
+  "reasoning_tokens": 404,
+  "usage": {
+   "prompt_tokens": 1479,
+   "completion_tokens": 411,
+   "total_tokens": 1890,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 404
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 71
+  }
+ },
+ {
+  "id": "vt-1846::一星期",
+  "label": false,
+  "red_line_guess": 0,
+  "is_ordinal": false,
+  "violated": false,
+  "raw": "{\"violated\": false}",
+  "finish": "stop",
+  "seconds": 2.7199161052703857,
+  "reasoning_tokens": 58,
+  "usage": {
+   "prompt_tokens": 1483,
+   "completion_tokens": 65,
+   "total_tokens": 1548,
+   "prompt_tokens_details": {
+    "cached_tokens": 1408
+   },
+   "completion_tokens_details": {
+    "reasoning_tokens": 58
+   },
+   "prompt_cache_hit_tokens": 1408,
+   "prompt_cache_miss_tokens": 75
+  }
+ }
+]
