@@ -218,8 +218,11 @@ def make_candidate_dataset(pool: list[dict]) -> list[dict]:
 
 def build_candidate_training_pool(train_records: list[dict]) -> list[dict]:
     """组装候选级训练池：`verdict=pass` 案例负例 + `verdict=fail` 案例可信
-    正例（`candidate_pool.build_trusted_candidate_pool`）+ train 切分合成
-    正例（`synth_minimal_edit.synthesize_all`）。
+    正例（`candidate_pool.build_trusted_candidate_pool`）+ 教师直接判定过
+    的"不确定候选"（`teacher_candidates_train.jsonl`，第三轮独立审计问题
+    二的修复）+ train 切分合成正例（`synth_minimal_edit.synthesize_all`）
+    + 结构性负例（`candidate_pool.build_structural_negatives`，第三轮独立
+    审计问题一的修复——打掉"答案带括注就判违规"这个纯结构捷径）。
 
     **惰性导入**：`candidate_pool`/`redline_candidates`/`synth_minimal_edit`
     不在 `deploy/runpod_pilot.sh` 的 RunPod 传输清单里（那份清单只 scp
@@ -229,14 +232,37 @@ def build_candidate_training_pool(train_records: list[dict]) -> list[dict]:
     root = Path(__file__).resolve().parent.parent
     if str(root) not in sys.path:
         sys.path.insert(0, str(root))
-    from verifier.candidate_pool import build_trusted_candidate_pool
+    from verifier.candidate_pool import (
+        build_structural_negatives,
+        build_trusted_candidate_pool,
+        load_teacher_candidate_labels,
+    )
     from verifier.redline_candidates import load_jargon
     from verifier.synth_minimal_edit import synthesize_all, synthetic_records_to_candidates
 
     jargon = load_jargon()
     trusted = build_trusted_candidate_pool(train_records, jargon)
+    # 问题二修复：250 条"不确定候选"（fail 案例里没命中 evidence、原本
+    # 整条丢弃的那批）已由教师直接候选级判定，落盘为
+    # verifier/teacher_candidates_train.jsonl——并回训练池，让同一个 fail
+    # 答案第一次同时含真正例和真负例候选，逼模型做候选级区分而不是学
+    # "候选来自哪个答案"这个退化代理。
+    teacher_path = root / "verifier" / "teacher_candidates_train.jsonl"
+    teacher_labeled = load_teacher_candidate_labels(teacher_path) if teacher_path.exists() else []
     synthetic = synthetic_records_to_candidates(synthesize_all(train_records))
-    return trusted + synthetic
+    n_positives = (
+        sum(1 for it in trusted if it["label"])
+        + sum(1 for it in teacher_labeled if it["label"])
+        + len(synthetic)
+    )
+    # 结构性负例数量对齐正例总数（约1:1）——可信池里 pass 案例候选有
+    # 5000+ 条，全装饰一遍会把正例占比从15.8%再腰斩到8.6%，重新逼近
+    # ticket 09/11 坍缩过的区间；目的只是让"有没有括注"这个特征不再
+    # 完美区分正负例，不需要每条负例都装饰一遍。
+    structural_negatives = build_structural_negatives(
+        train_records, jargon, holdout=False, max_items=n_positives
+    )
+    return trusted + teacher_labeled + synthetic + structural_negatives
 
 
 def infer_is_positive(rows: list[dict]):
@@ -371,6 +397,15 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.make_candidate_data:
+        # 惰性导入（同 build_candidate_training_pool 的理由：candidate_pool
+        # 不在 RunPod 传输清单里，模块顶层 import 会在远程炸掉）——这里只
+        # 要一个字符串常量，跟 build_candidate_training_pool 各自惰性导入
+        # 一次，不算重复劳动。
+        root = Path(__file__).resolve().parent.parent
+        if str(root) not in sys.path:
+            sys.path.insert(0, str(root))
+        from verifier.candidate_pool import STRUCTURAL_NEGATIVE_SUFFIX
+
         # **读 args.data，不硬编码路径**（code review 发现：硬编码曾经让
         # --data 被静默忽略——同一个标志在这个脚本里既是 train() 的输入，
         # 也应该是这个模式的输入，不能各写一套）。
@@ -388,8 +423,11 @@ def main() -> int:
         n_pos = sum(1 for r in ds if json.loads(r["output"])["violated"])
         n_rl0 = sum(1 for r in pool if r["label"] and r.get("red_line_guess") == 0)
         n_rl2 = sum(1 for r in pool if r["label"] and r.get("red_line_guess") == 2)
+        n_structneg = sum(1 for r in pool if r["case_id"].endswith(STRUCTURAL_NEGATIVE_SUFFIX))
         print(f"候选级训练集 {len(ds)} 条（正例 {n_pos}，{n_pos / len(ds):.1%}"
-              f"——红线0 {n_rl0} / 红线2 {n_rl2}；负例 {len(ds) - n_pos}）")
+              f"——红线0 {n_rl0} / 红线2 {n_rl2}；负例 {len(ds) - n_pos}，"
+              f"其中结构性负例 {n_structneg} 条——问题一的修复，打掉"
+              "「括注即违规」这个纯结构捷径）")
         # 绝不只报总体准确率能算出的假象数字——这里只报正负比例，不是准确率，
         # 但仍然按项目纪律把红线0/2分开列，供后续训练配置参考。
         args.candidate_data_out.write_text(

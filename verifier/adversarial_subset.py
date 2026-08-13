@@ -17,6 +17,13 @@ INJECTIONS`——独立第二意见代码审计发现：这样构造出来的对
 验收用的那部分成员选，与 train 用的成员（`holdout=False`，默认值）
 互不重叠。
 
+**同时混入结构性负例**（第三轮独立审计问题一的修复）：只看答案有没有
+含固定括注模板这一个特征，不读原文，就能在纯正例对抗子集上拿到 100%
+召回/0%误报——现在混入"括注存在但内容真实无害"的负例（`candidate_pool
+.build_structural_negatives`），一个只认结构的分类器在这份对抗子集上
+会被拉回到接近瞎猜的水平，只有真正读懂原文依据关系的分类器才能两类
+都判对。
+
 用法：
     python3 verifier/adversarial_subset.py
 """
@@ -29,6 +36,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from verifier.candidate_pool import build_structural_negatives, load_jargon  # noqa: E402
 from verifier.synth_minimal_edit import (  # noqa: E402
     synthesize_all,
     synthetic_records_to_candidates,
@@ -38,8 +46,15 @@ WORK = ROOT / "verifier" / "work"
 MIN_SIZE = 50  # L2 判读规则的门槛
 
 
-def build_adversarial_subset(records: list[dict]) -> list[dict]:
-    return synthetic_records_to_candidates(synthesize_all(records, holdout=True))
+def build_adversarial_subset(records: list[dict], jargon: set[str] | None = None) -> list[dict]:
+    positives = synthetic_records_to_candidates(synthesize_all(records, holdout=True))
+    # 负例数量对齐正例总数（约1:1，同 train_lora.py 的口径）——不需要
+    # 把可信池里所有 pass 候选都装饰一遍，只要"有没有括注"在这份验收集
+    # 里不再完美区分两类就够了。
+    negatives = build_structural_negatives(
+        records, jargon if jargon is not None else load_jargon(), holdout=True, max_items=len(positives)
+    )
+    return positives + negatives
 
 
 def main() -> int:
@@ -49,11 +64,14 @@ def main() -> int:
         if line.strip()
     ]
     subset = build_adversarial_subset(records)
-    n_rl0 = sum(1 for it in subset if it["red_line_guess"] == 0)
-    n_rl2 = sum(1 for it in subset if it["red_line_guess"] == 2)
-    ok = len(subset) >= MIN_SIZE
+    n_pos = sum(1 for it in subset if it["label"] is True)
+    n_neg = sum(1 for it in subset if it["label"] is False)
+    n_rl0 = sum(1 for it in subset if it["label"] is True and it["red_line_guess"] == 0)
+    n_rl2 = sum(1 for it in subset if it["label"] is True and it["red_line_guess"] == 2)
+    ok = n_pos >= MIN_SIZE
     print(f"holdout {len(records)} 条 -> 对抗子集 {len(subset)} 条"
-          f"（红线0 {n_rl0} / 红线2 {n_rl2}）（L2 门槛 ≥{MIN_SIZE} -> {'通过' if ok else '未通过'}）")
+          f"（正例 {n_pos}：红线0 {n_rl0} / 红线2 {n_rl2}；结构性负例 {n_neg}）"
+          f"（L2 门槛正例数 ≥{MIN_SIZE} -> {'通过' if ok else '未通过'}）")
 
     WORK.mkdir(parents=True, exist_ok=True)
     out = WORK / "adversarial_subset_holdout.json"

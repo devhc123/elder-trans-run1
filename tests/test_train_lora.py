@@ -447,6 +447,21 @@ def _train_style_record(case_id, source, answer, verdict, red_lines=None):
     }
 
 
+def test_build_candidate_training_pool_includes_teacher_labeled_uncertain_candidates():
+    """问题二修复：`verifier/teacher_candidates_train.jsonl`（250 条不确定
+    候选里属于 train 切分的 100 条，教师直接判定过）必须被并入训练池——
+    没有它，同一个 fail 答案永远不会同时出现正例候选和负例候选。用空
+    `train_records` 隔离掉可信池/合成正例两路，只看这一路是否真的接上了。"""
+    teacher_path = ROOT / "verifier" / "teacher_candidates_train.jsonl"
+    assert teacher_path.exists(), "教师标注产物应已提交进库"
+    expected = [json.loads(line) for line in teacher_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+    pool = build_candidate_training_pool([])
+    assert len(pool) == len(expected)
+    assert any(it["label"] is True for it in pool)
+    assert any(it["label"] is False for it in pool)
+
+
 def test_build_candidate_training_pool_combines_trusted_and_synthetic():
     records = [
         _train_style_record("p1", "本药物用于降压治疗。", "医生给您开的是硝苯地平。", "pass"),

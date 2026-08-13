@@ -103,6 +103,17 @@ TEMPLATES = [
     "（这类药常见的还有{names}。）",
 ]
 
+# 每个模板的括注前缀——`candidate_pool.STRUCTURAL_NEGATIVE_FILLERS` 必须
+# 复用这几个前缀（不能自己另起一套），否则打掉"括注即违规"捷径的负例
+# 跟正例用的不是同一批模板标记，退化分类器只需要多认几个新前缀就绕过去。
+# 这里是唯一定义处，`candidate_pool.py` 和它的测试都从这里导入，不再
+# 各自手抄一份字面量元组（第三份独立副本曾经导致"改了 TEMPLATES 却忘了
+# 同步测试里的硬编码副本"这类静默漂移，`/code-review` 发现）。
+TEMPLATE_PREFIXES = ("（补充一句：", "（顺带说一句，", "（这类")
+assert all(t.startswith(TEMPLATE_PREFIXES) for t in TEMPLATES), (
+    "TEMPLATES 改了措辞但 TEMPLATE_PREFIXES 没同步——结构性负例的括注前缀会跟正例脱节"
+)
+
 # 数字/频次触发标记——**有意收窄的子集**，不是要跟 build_teacher_labels
 # .CONDITIONAL_MARKERS 完全一致（同 CATEGORY_MARKERS 那次收窄，见上方注释
 # 的教训）。只保留局部语义必然蕴含"这里没给具体数字"的四个词；排除
