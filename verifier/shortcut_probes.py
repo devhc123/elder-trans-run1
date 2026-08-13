@@ -10,6 +10,24 @@
 完全不读 `source_text`、不做任何语义判断，只看结构。如果其中任何一个能把
 正负例分开，那说明数据集里有一条不需要理解就能走的捷径。
 
+## 证据是单向的（L5，Feng, Wallace & Boyd-Graber, ACL 2019, arXiv:1905.05778）
+
+这个模块有 8 年的文献谱系（**partial-input baseline / hypothesis-only baseline**，
+Gururangan et al. NAACL 2018 arXiv:1803.02324：只看假设不看前提就能对 SNLI 的 67%）。
+而那条谱系里最要紧的一条结论是**证据不对称**：
+
+> 探针**成功**说明这份数据能被作弊；
+> 探针**失败不能说明这份数据没有伪影**——它可能只是掩盖了"只在完整输入里才看得见"的
+> 更平凡的模式。
+
+所以本模块的门槛**只在一个方向上有效力**：超线即否决；**未超线只是"没被证伪"，
+不构成"这份池干净"的任何正面证据**。代码与报告里都不许出现"通过=干净"的说法。
+
+同一篇论文也给了正面指引：单视角探针不够，必须有**同时读两侧输入、但只做平凡处理**的
+探针（他们实测：hypothesis-only 模型叠加前提里的平凡模式，能解掉此前被判为 "hard" 的
+样本中的 15%）。`conjunction_in_paren_and_not_grounded` 就是这一条，**它永不从套件里
+移除**，即使它按构造就接近满分、即使它只报告不设门。
+
 ## 三档门槛（预注册，不许测完再调）
 
 - **纯结构探针（`STRUCTURE_PROBES`）**：只在**对抗子集**上设硬门
@@ -196,6 +214,15 @@ REPORT_ONLY_PROBES = (
     "candidate_kind_is_lexicon",
 )
 
+# **同时读两侧输入的探针，永不移除**（L5 / Feng et al. arXiv:1905.05778）。
+# 它按构造就接近满分、又只报告不设门，看起来像"没用、可以删掉"——恰恰相反：
+# 单视角探针漏掉的伪影只有这种联合视角探针捞得出来。用断言把它钉住。
+JOINT_VIEW_PROBES = ("conjunction_in_paren_and_not_grounded",)
+assert set(JOINT_VIEW_PROBES) <= {n for n, _ in PROBES}, (
+    "联合视角探针被从 PROBES 里删掉了——L5 的判读规则明确要求常驻至少一条"
+    "同时读答案与原文的探针，它是单视角探针漏掉的那部分伪影的唯一抓手"
+)
+
 
 @dataclass(frozen=True)
 class ProbeScore:
@@ -297,7 +324,10 @@ def report(pool: list[dict], title: str, *, gate: bool = False,
         print(f"  ✗ 纯结构探针超门槛：{', '.join(fails)} —— 这份池能被不读原文的"
               f"退化分类器分开，不是可以拿去验收的集合")
         return False
-    print("  ✓ 纯结构探针全部在门槛内")
+    # 措辞是 L5 判读规则的一部分：不许写成"干净/通过"。探针失败不能证明
+    # 数据集没有伪影（Feng et al. arXiv:1905.05778），只能证明"没被这几条
+    # 探针证伪"。
+    print("  ○ 纯结构探针未超线 —— 只是**没被证伪**，不构成「这份池干净」的证据")
     return True
 
 

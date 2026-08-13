@@ -274,3 +274,36 @@ def test_current_adversarial_subset_is_fully_cracked_by_the_position_probe():
     assert s.fpr < 0.01
     assert s.youden_j > 0.98
     assert gate_failures(score_pool(subset))          # 门槛现在就该是红的
+
+
+# ---------- L5（铁律15 文献门）落进代码的三条判读规则 ----------
+
+def test_joint_view_probe_is_pinned_and_cannot_be_dropped():
+    """**L5 / Feng et al. ACL 2019 (arXiv:1905.05778)**：单视角探针不够——他们实测
+    hypothesis-only 模型叠加前提里的平凡模式，能解掉此前被判为 "hard" 的样本中的 15%。
+    合取探针按构造就接近满分、又只报告不设门，看起来像"没用可以删"，恰恰相反：
+    它是单视角探针漏掉的那部分伪影的唯一抓手。"""
+    from verifier.shortcut_probes import JOINT_VIEW_PROBES
+    assert JOINT_VIEW_PROBES
+    assert set(JOINT_VIEW_PROBES) <= {n for n, _ in PROBES}
+    # 联合视角探针必须真的同时用到答案和原文
+    for name in JOINT_VIEW_PROBES:
+        assert name in REPORT_ONLY_PROBES     # 不设门（规则合成集上按构造就高）
+
+
+def test_passing_the_gate_is_never_reported_as_clean(capsys):
+    """**L5 的核心结论：证据是单向的。** 探针超线说明可作弊；探针未超线**不能**
+    说明数据集没有伪影。报告措辞必须体现这一点——写成"通过/干净"会让下一个人
+    把一个无效证据当成正面证据。"""
+    clean = [
+        _item("硝苯地平", True, answer="医生给您开的是硝苯地平。"),
+        _item("氨氯地平", False, answer="医生给您开的是氨氯地平。"),
+    ]
+    assert report(clean, "无注入池", gate=True) is True
+    out = capsys.readouterr().out
+    gate_line = [ln for ln in out.splitlines() if "纯结构探针" in ln and "超线" in ln]
+    assert gate_line, "门槛结论行不见了"
+    assert "没被证伪" in gate_line[0]
+    assert "不构成" in gate_line[0]
+    # 不许出现肯定式的通过标记——"干净"只允许出现在否定句里
+    assert "✓" not in gate_line[0]
