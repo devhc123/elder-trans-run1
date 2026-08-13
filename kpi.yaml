@@ -68,8 +68,8 @@ metrics:
       防止可读性靠歪曲或删减原文换取。
     judge: Claude Sonnet 5（session subagent；异厂解耦，判官厂商 != 被测厂商）
     reproducibility: 可审计不可复现 —— 逐条留痕 judge_runs/<run_id>.jsonl
-    actual: null
-    ci95: null
+    actual: 0.7259
+    ci95: [0.6698, 0.7757]
 
 # --- 被测系统 -----------------------------------------------------------
 system_under_test:

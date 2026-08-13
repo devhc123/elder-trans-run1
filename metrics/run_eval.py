@@ -373,6 +373,7 @@ def _write_kpi(run_id: str, rows: list[dict], jrows: list[dict]) -> None:
     text += f"judge_note: Claude Sonnet 5 session subagent；可审计不可复现，留痕见 runs/{run_id}/\n"
     KPI.write_text(text, encoding="utf-8")
     write_kpi1_actual(rows, kpi_path=KPI)
+    write_guard_faithfulness_actual(jrows, kpi_path=KPI)
 
 
 def write_kpi1_actual(rows: list[dict], kpi_path: Path = KPI) -> None:
@@ -418,6 +419,40 @@ def write_kpi1_actual(rows: list[dict], kpi_path: Path = KPI) -> None:
         "    ci95: null\n    verdict: 达标  # 0.9518（均值）与 0.9741（达标率）两种读法都 ≥ target 0.90\n",
         f"    ci95: [{round(lo,4)}, {round(hi,4)}]\n"
         f"    verdict: {verdict}\n",
+    )
+
+    text = text[:start] + block + text[end:]
+    kpi_path.write_text(text, encoding="utf-8")
+
+
+def write_guard_faithfulness_actual(jrows: list[dict], kpi_path: Path = KPI) -> None:
+    """回填 guard_faithfulness 的 `actual`/`ci95`——同样的历史缺口：`_write_kpi`
+    只把这个数字写进文末扁平区块（`guard_faithfulness: 0.7259`），从未写进
+    `metrics[]` 里 schema 真正指向的地方。
+
+    只在 `id: guard_faithfulness` 这一段范围内替换（该段是 metrics 列表最后
+    一项，以下一个空行为界），避免全局字符串替换误伤 kpi1/kpi2 同名的
+    `actual: null`。尚无判官结果（jrows 为空）时不写——不能拿空数据编个假数字。
+    """
+    if not jrows:
+        return
+    okf = sum(1 for r in jrows if r["faithful"] and not r["violated"])
+    n = len(jrows)
+    rate = round(okf / n, 4)
+    lo, hi = wilson(okf, n)
+
+    text = kpi_path.read_text(encoding="utf-8")
+    start = text.find("  - id: guard_faithfulness")
+    if start == -1:
+        return
+    end = text.find("\n\n", start)
+    if end == -1:
+        end = len(text)
+    block = text[start:end]
+
+    block = block.replace(
+        "    actual: null\n    ci95: null",
+        f"    actual: {rate}\n    ci95: [{round(lo,4)}, {round(hi,4)}]",
     )
 
     text = text[:start] + block + text[end:]

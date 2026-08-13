@@ -22,6 +22,7 @@ from metrics.run_eval import (  # noqa: E402
     build_user_prompt,
     load_cases,
     mock_output,
+    write_guard_faithfulness_actual,
     write_kpi1_actual,
 )
 from metrics.wilson import wilson  # noqa: E402
@@ -295,3 +296,72 @@ def test_kpi1_actual_net_gain_is_untouched():
 
     src = inspect.getsource(write_kpi1_actual)
     assert "actual_net_gain" not in src, "write_kpi1_actual 不该碰 actual_net_gain"
+
+
+# ---------- write_guard_faithfulness_actual：同样的历史缺口——_write_kpi
+# 只把这个数字写进文末扁平区块（`guard_faithfulness: 0.7259`），从没写进
+# metrics[] 里 schema 真正指向的 actual/ci95。
+
+def _fake_jrows(n_pass=7, n_fail=3):
+    rows = []
+    for i in range(n_pass):
+        rows.append({"faithful": True, "violated": False})
+    for i in range(n_fail):
+        rows.append({"faithful": False, "violated": True})
+    return rows
+
+
+def test_guard_faithfulness_actual_is_the_pass_rate(tmp_path):
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_guard_faithfulness_actual(_fake_jrows(), kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    gf = next(m for m in data["metrics"] if m["id"] == "guard_faithfulness")
+    assert gf["actual"] == round(7 / 10, 4)
+
+
+def test_guard_faithfulness_ci95_is_written_as_a_pair(tmp_path):
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_guard_faithfulness_actual(_fake_jrows(), kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    gf = next(m for m in data["metrics"] if m["id"] == "guard_faithfulness")
+    ci = gf["ci95"]
+    assert isinstance(ci, list) and len(ci) == 2
+    assert 0.0 <= ci[0] <= ci[1] <= 1.0
+
+
+def test_guard_faithfulness_write_does_not_disturb_kpi1_or_kpi2(tmp_path):
+    """全局字符串替换会把 kpi1/kpi2 同名的 `actual: null` 一并改掉——必须
+    只改 guard_faithfulness 那一段。"""
+    import yaml
+
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+
+    write_guard_faithfulness_actual(_fake_jrows(), kpi_path=kpi)
+
+    data = yaml.safe_load(kpi.read_text(encoding="utf-8"))
+    k1 = next(m for m in data["metrics"] if m["id"] == "kpi1_readability")
+    kpi2 = next(m for m in data["metrics"] if m["id"] == "kpi2_scenario_coverage")
+    assert k1["actual"] is None
+    assert kpi2["actual"] is None
+
+
+def test_guard_faithfulness_write_is_a_noop_when_no_judged_rows(tmp_path):
+    """尚未判官过的跑数不该往 kpi.yaml 里写假数字。"""
+    kpi = tmp_path / "kpi.yaml"
+    kpi.write_text(_KPI1_FIXTURE, encoding="utf-8")
+    before = kpi.read_text(encoding="utf-8")
+
+    write_guard_faithfulness_actual([], kpi_path=kpi)
+
+    assert kpi.read_text(encoding="utf-8") == before
