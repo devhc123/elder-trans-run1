@@ -25,3 +25,4 @@ index/
 candidates/
 work/
 runs/
+deploy/rxreader/*.gguf

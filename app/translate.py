@@ -87,6 +87,13 @@ def translate(case: dict, hint=None, *, model=None, key=None, base=None,
                    "model": r.get("model", model), "usage": r.get("usage", {}),
                    "latency_s": round(time.time() - t0, 2), "hinted": bool(system != SYSTEM_PROMPT)}
             if rec["finish_reason"] not in (None, "stop"):
+                # thinking 吃光额度导致正文截断（core40 实测 1/40，reasoning 7,650 tok）：
+                # 升一档额度重试一次，仍截断才标 truncated 交给上层。
+                if attempt < retries - 1 and max_tokens < 16000:
+                    body = body.replace(f'"max_tokens": {max_tokens}'.encode(), f'"max_tokens": {max_tokens * 2}'.encode())
+                    max_tokens *= 2
+                    req = urllib.request.Request(req.full_url, data=body, headers=req.headers)
+                    continue
                 rec["truncated"] = True
             if not content.strip():
                 rec["error"] = f"空输出（finish_reason={rec['finish_reason']}）"
@@ -106,7 +113,7 @@ def run_batch(path: Path, out: Path, workers: int = 8, hints: dict | None = None
         for l in out.read_text(encoding="utf-8").splitlines():
             if l.strip():
                 r = json.loads(l)
-                if r.get("output"):
+                if r.get("output") and not r.get("truncated"):
                     done[r["id"]] = r
     todo = [c for c in cases if c["id"] not in done]
     print(f"{len(cases)} 题，已完成 {len(done)}，待跑 {len(todo)}", flush=True)
