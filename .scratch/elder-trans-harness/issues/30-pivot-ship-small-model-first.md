@@ -155,3 +155,19 @@ GGUF q4_k_m 542MB / q8_0 834MB 已取回 `runs/rxreader/`，pod 已删。GPU 花
 
 产物：`runs/s3/{hints,outputs}[_b].jsonl`、`runs/ab/baseline_vs_rxreader_v1{,_b,_core80,_orig}.json`、
 `runs/s3/demo/demo.json`（模型卡实拍）、`deploy/rxreader/hf_model_card.md`（已填数）。
+
+## 发布（2026-08-17 19:3x）
+
+HF **私有**仓库 https://huggingface.co/chenhaodev/rxreader-qwen3.5-0.8b ：
+`README.md`（模型卡）、`v1/Qwen3.5-0.8B.Q4_K_M.gguf`（542MB）、`v1/Qwen3.5-0.8B.Q8_0.gguf`（834MB）、
+`v1/lora_adapter/`、`v1/Modelfile`。两份 GGUF 远端 LFS sha256 与本地一致。**是否转公开由用户定。**
+
+本地 ollama 已有 `rxreader-v1`。端到端一条命令：
+`python app/rxreader.py --text <医嘱> --persona <档案>` → `python app/translate.py --text <医嘱> --persona <档案> --hint '<上一步 JSON>'`。
+
+**遗留 / 下一步（S4 及以后）**
+- `app/translate.py` 与 `app/ab_judge.py` 还没接 ¥5 预算门（标注器已接）。
+- hint 措辞可调：explain 栏加「解释一次后用白话代称」，压药名反复出现（可读性掉的两题）。
+- 非子串丢弃 8%——多数是边界差一两个字，吸附阈值 0.75 可再调；或多训一轮加 Q8 对比。
+- 旧红线判定器（ticket 14–29）作可选后置复检接回来。
+- 一次一体化 CLI（rxreader → translate 串起来、可选 --no-hint 对照）。
