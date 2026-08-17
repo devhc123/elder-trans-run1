@@ -77,16 +77,38 @@ POD_ID=$(runpodctl create pod --name "$POD_NAME" --gpuType "$GPU_TYPE" --imageNa
 echo "  pod id: $POD_ID"
 cleanup() { echo "[删机] $POD_ID"; runpodctl remove pod "$POD_ID" >/dev/null 2>&1 || warn "删机失败，去控制台手动删：$POD_ID"; }
 trap cleanup EXIT
+# 第二层保险：脱离会话的定时删机（90 分钟硬线）。本地脚本被杀 / 终端断了，pod 也不会一直计费。
+nohup bash -c "sleep 5400; runpodctl remove pod $POD_ID >/dev/null 2>&1" >/dev/null 2>&1 &
+echo "  已挂 90 分钟硬线删机（pid $!）"
 
 echo "[等 SSH]"
+# host:port 优先走 REST API（publicIp + portMappings["22"]），后备 runpodctl get pod -a。
+# 之前用 `get pod <id>` + grep '"22/tcp"' 从没真跑通过（本项目 pilot 脚本那段是未验证的），第一次建机
+# 就在这里空等 5 分钟后删机。原始输出留在 runs/rxreader/podinfo.log 供下次核对格式。
 HOST=""; PORT=""
-for i in $(seq 1 30); do
-  INFO=$(runpodctl get pod "$POD_ID" 2>/dev/null)
-  HOST=$(echo "$INFO" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-  PORT=$(echo "$INFO" | grep -oE '"22/tcp":\s*[0-9]+' | grep -oE '[0-9]+$')
+for i in $(seq 1 60); do
+  J=$(curl -s -m 20 -H "Authorization: Bearer $ENV_KEY" "https://rest.runpod.io/v1/pods/$POD_ID")
+  read -r HOST PORT < <(python3 - "$J" <<'PY'
+import json, sys
+try:
+    d = json.loads(sys.argv[1])
+    ip = d.get("publicIp") or ""
+    pm = d.get("portMappings") or {}
+    port = pm.get("22") or pm.get(22) or ""
+    print(ip, port)
+except Exception:
+    print("", "")
+PY
+)
+  if [ -z "$HOST" ] || [ -z "$PORT" ]; then
+    INFO=$(runpodctl get pod -a 2>/dev/null | grep "$POD_ID")
+    echo "$INFO" >> runs/rxreader/podinfo.log
+    HP=$(echo "$INFO" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+->22' | head -1)
+    HOST=${HP%%:*}; PORT=$(echo "$HP" | grep -oE ':[0-9]+' | tr -d : | head -1)
+  fi
   [ -n "$HOST" ] && [ -n "$PORT" ] && break; sleep 10
 done
-[ -n "$HOST" ] && [ -n "$PORT" ] || { echo "拿不到 SSH host:port，pod=$POD_ID"; exit 1; }
+[ -n "$HOST" ] && [ -n "$PORT" ] || { echo "10 分钟拿不到 SSH host:port，pod=$POD_ID；REST 最后返回：$J"; exit 1; }
 SSH="ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $KEY -p $PORT root@$HOST"
 for i in $(seq 1 20); do $SSH -o ConnectTimeout=10 'echo ok' >/dev/null 2>&1 && break; sleep 10; done
 $SSH -o ConnectTimeout=10 'echo ok' >/dev/null 2>&1 || { echo "SSH 连不上 $HOST:$PORT"; exit 1; }
