@@ -106,11 +106,15 @@ def main() -> int:
                 if not r.get("error"): done[r["id"]] = r
     todo = [c for c in cases if c["id"] not in done]
     print(f"{len(cases)} 条，已有 {len(done)}，待标 {len(todo)}", flush=True)
-    with cf.ThreadPoolExecutor(a.workers) as ex:
-        for i, r in enumerate(ex.map(lambda c: label_one(c, model, key, base), todo), 1):
-            done[r["id"]] = r
-            if i % 20 == 0 or i == len(todo): print(f"  {i}/{len(todo)}", flush=True)
+    # 逐条追加落盘（append 模式）：两小时的批量不能只在结束时写一次
     a.out.parent.mkdir(parents=True, exist_ok=True)
+    with a.out.open("a", encoding="utf-8") as fh, cf.ThreadPoolExecutor(a.workers) as ex:
+        futs = {ex.submit(label_one, c, model, key, base): c for c in todo}
+        for i, f in enumerate(cf.as_completed(futs), 1):
+            r = f.result(); done[r["id"]] = r
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n"); fh.flush()
+            if i % 20 == 0 or i == len(todo): print(f"  {i}/{len(todo)}", flush=True)
+    # 收尾按 cases 顺序重写一份干净的（去掉续跑产生的重复/错误行）
     with a.out.open("w", encoding="utf-8") as fh:
         for c in cases:
             if c["id"] in done: fh.write(json.dumps(done[c["id"]], ensure_ascii=False) + "\n")

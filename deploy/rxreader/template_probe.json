@@ -1,0 +1,43 @@
+{
+  "base": "Qwen/Qwen3.5-0.8B",
+  "transformers_version": "5.9.0",
+  "response_part": "<|im_start|>assistant\n<think>\n\n</think>\n\n",
+  "instruction_part": "<|im_start|>user\n",
+  "response_part_sha": "b1d3ec2c64195bd1",
+  "template_has_empty_think": true,
+  "template_inserts_system": false,
+  "length_stats": {
+    "n": 305,
+    "source": "reference/run1_seed_replies.jsonl",
+    "p50": 205,
+    "p95": 261,
+    "p99": 298,
+    "max": 311,
+    "note": "run1 种子回复有生成上限，这是下限估计，不是最终预算。票 7 生成 v4-flash 真实回复后必须重跑本脚本。"
+  },
+  "recommended_max_seq_length": 3072,
+  "recommended_num_ctx": 8192,
+  "ollama_usable_input_ratio": 0.5,
+  "length_stats_measured_on_real_candidates": {
+    "n": 579,
+    "author": "deepseek-v4-flash",
+    "source": "data/raw/candidates.jsonl",
+    "reply_only": {
+      "p50": 167,
+      "p95": 250,
+      "p99": 285,
+      "max": 375
+    },
+    "dialogue_plus_reply": {
+      "p50": 262,
+      "p95": 658,
+      "p99": 851,
+      "max": 1100
+    },
+    "withsys_estimate": {
+      "p99": 1297,
+      "max": 1546
+    },
+    "note": "此前用 xlsx 产品回复做代理估到 p99≈2150，高估 2.5 倍；v4-flash 受自身 300 字 system prompt 约束，长度分布与代理完全不同"
+  }
+}
