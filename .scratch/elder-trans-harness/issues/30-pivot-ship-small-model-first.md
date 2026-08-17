@@ -171,3 +171,12 @@ HF **私有**仓库 https://huggingface.co/chenhaodev/rxreader-qwen3.5-0.8b ：
 - 非子串丢弃 8%——多数是边界差一两个字，吸附阈值 0.75 可再调；或多训一轮加 Q8 对比。
 - 旧红线判定器（ticket 14–29）作可选后置复检接回来。
 - 一次一体化 CLI（rxreader → translate 串起来、可选 --no-hint 对照）。
+
+## 2026-08-17 晚：HF 转公开 + 一体化 CLI
+
+- HF 仓库已 **公开**（`update_repo_settings(private=False)`，匿名 GET README 200）。
+- `app/rxtrans.py`：一条命令 rxreader（ollama）→ hint → deepseek；`--no-hint` 对照、`--json` 结构化、
+  `--batch/--out/--hints-out` 批量、ollama 不可用退化为无 hint 并 stderr 警告。实测读析 2.7s + 转译 7s。
+- deepseek 费用复盘（用户追问）：模型确为 deepseek-v4-flash。全天输出 token ≈ 6.0M，其中 **5.0M（84%）是
+  thinking 开着的 1,310 条标注**（每条 ~3.8k reasoning 换 60 token 答案），峰价 ¥9.5/M → 约 ¥48；
+  其余（判官 4 轮 ~0.7M、生成 6 臂 ~0.2M、关 thinking 标注 0.06M）合计约 ¥9。余额 43.37 → 30.95。
