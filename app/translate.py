@@ -23,6 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from app.cost import Budget, est_cny  # noqa: E402
 from metrics.run_eval import SYSTEM_PROMPT, build_user_prompt  # noqa: E402
 
 DEFAULT_QUERY = "医生给我开了这个，我看不懂，您给我说说？"
@@ -105,7 +106,8 @@ def translate(case: dict, hint=None, *, model=None, key=None, base=None,
     return {"id": c["id"], "output": None, "error": "unreachable"}
 
 
-def run_batch(path: Path, out: Path, workers: int = 8, hints: dict | None = None) -> None:
+def run_batch(path: Path, out: Path, workers: int = 8, hints: dict | None = None,
+              budget_cny: float = 5.0) -> None:
     cases = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
     out.parent.mkdir(parents=True, exist_ok=True)
     done = {}
@@ -116,18 +118,33 @@ def run_batch(path: Path, out: Path, workers: int = 8, hints: dict | None = None
                 if r.get("output") and not r.get("truncated"):
                     done[r["id"]] = r
     todo = [c for c in cases if c["id"] not in done]
-    print(f"{len(cases)} 题，已完成 {len(done)}，待跑 {len(todo)}", flush=True)
+    print(f"{len(cases)} 题，已完成 {len(done)}，待跑 {len(todo)}，预算 ¥{budget_cny}", flush=True)
+    budget = Budget(budget_cny, "生成")
+    # 预算门：滚动提交，超预算时未提交的题不发、标 error 写进文件（结果是部分的，不能当完整跑）
     with cf.ThreadPoolExecutor(workers) as ex:
-        futs = {ex.submit(translate, c, (hints or {}).get(c["id"])): c for c in todo}
-        for i, f in enumerate(cf.as_completed(futs), 1):
-            r = f.result(); done[r["id"]] = r
-            flag = "!!" if r.get("error") or r.get("truncated") else "ok"
-            print(f"  [{i}/{len(todo)}] {r['id']} {flag} {r.get('latency_s','')}s", flush=True)
+        pending = list(todo); futs = {}
+        def submit_more():
+            while pending and len(futs) < workers * 2 and not budget.exceeded:
+                c = pending.pop(0)
+                futs[ex.submit(translate, c, (hints or {}).get(c["id"]))] = c
+        submit_more(); i = 0
+        while futs:
+            for f in cf.as_completed(list(futs)):
+                futs.pop(f); r = f.result(); done[r["id"]] = r; i += 1
+                budget.add(r.get("usage"))
+                flag = "!!" if r.get("error") or r.get("truncated") else "ok"
+                print(f"  [{i}/{len(todo)}] {r['id']} {flag} {r.get('latency_s','')}s  ¥{budget.spent:.2f}", flush=True)
+                submit_more(); break
+        for c in pending:
+            done[c["id"]] = {"id": c["id"], "output": None, "error": "budget exceeded（未调用）"}
     with out.open("w", encoding="utf-8") as fh:
         for c in cases:
             fh.write(json.dumps(done[c["id"]], ensure_ascii=False) + "\n")
     bad = [r for r in done.values() if r.get("error") or r.get("truncated")]
     print(f"写入 {out}；异常 {len(bad)} 条" + (": " + ", ".join(r["id"] for r in bad) if bad else ""))
+    print(budget.summary())
+    if pending:
+        print(f"!! 超预算，{len(pending)} 题未跑——这份输出是**部分**结果，续跑会自动补（同命令再执行）")
 
 
 def main() -> int:
@@ -141,13 +158,14 @@ def main() -> int:
     ap.add_argument("--hints", type=Path, help="批量 hint 文件 jsonl：{id, keep:[], explain:[]}")
     ap.add_argument("--out", type=Path, help="批量输出 jsonl")
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--budget-cny", type=float, default=5.0, help="批量预算上限，超了停止提交（默认 ¥5）")
     a = ap.parse_args()
 
     if a.batch:
         hints = None
         if a.hints:
             hints = {r["id"]: r for r in map(json.loads, a.hints.read_text(encoding="utf-8").splitlines()) if r}
-        run_batch(a.batch, a.out or Path("runs/adhoc/outputs.jsonl"), a.workers, hints)
+        run_batch(a.batch, a.out or Path("runs/adhoc/outputs.jsonl"), a.workers, hints, a.budget_cny)
         return 0
 
     if a.case:
@@ -166,7 +184,7 @@ def main() -> int:
     if r.get("error"):
         print("ERROR:", r["error"], file=sys.stderr); return 1
     print(r["output"])
-    print(f"\n--- {r['model']} {r['latency_s']}s hinted={r['hinted']}", file=sys.stderr)
+    print(f"\n--- {r['model']} {r['latency_s']}s hinted={r['hinted']} 估算 ¥{est_cny(r.get('usage')):.3f}", file=sys.stderr)
     return 0
 
 

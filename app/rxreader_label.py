@@ -24,6 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from app.cost import PRICE_IN, PRICE_OUT, Budget, est_cny  # noqa: E402
 from app.translate import load_env  # noqa: E402
 
 SYSTEM = """你是「医嘱读析器」。读一段医疗专业原文，抽出两类**原文逐字子串**，交给下游大模型做适老化转述。
@@ -51,15 +52,6 @@ def snap(phrase: str, text: str, thr: float = 0.75) -> str | None:
             if r > best_r:
                 best, best_r = w, r
     return best
-
-
-# 峰时 deepseek-v4-flash 输出 $1.32/M ≈ ¥9.5/M；谷时一半。可用环境变量 DEEPSEEK_OUT_CNY_PER_M 覆盖。
-PRICE_OUT = float(os.environ.get("DEEPSEEK_OUT_CNY_PER_M", "9.5"))
-PRICE_IN = float(os.environ.get("DEEPSEEK_IN_CNY_PER_M", "1.0"))
-
-
-def est_cny(usage: dict) -> float:
-    return (usage.get("completion_tokens", 0) * PRICE_OUT + usage.get("prompt_tokens", 0) * PRICE_IN) / 1e6
 
 
 def label_one(c: dict, model: str, key: str, base: str, think: bool = False) -> dict:

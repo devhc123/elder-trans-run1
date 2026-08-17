@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from app.rxreader_label import PRICE_IN, PRICE_OUT  # noqa: E402
+from app.cost import PRICE_IN, PRICE_OUT, Budget  # noqa: E402
 from app.translate import load_env  # noqa: E402
 from metrics.readability import Lexicon, score  # noqa: E402
 
@@ -90,6 +90,7 @@ def main() -> int:
     ap.add_argument("--judges", type=int, default=3)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--label-a", default="A"); ap.add_argument("--label-b", default="B")
+    ap.add_argument("--budget-cny", type=float, default=5.0, help="判官 batch 预算上限，超了停止提交（默认 ¥5）")
     a = ap.parse_args()
     load_env()
     model = os.environ.get("DEEPSEEK_JUDGE_MODEL", os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"))
@@ -111,15 +112,29 @@ def main() -> int:
     temperature = 0.0 if a.judges == 1 else 0.7
 
     votes = []
+    budget = Budget(a.budget_cny, "判官")
+    # 预算门：不一次性把全部 job 塞进线程池，而是滚动提交——超预算时未提交的直接不发。
     with cf.ThreadPoolExecutor(a.workers) as ex:
-        futs = {ex.submit(call_judge, p, j, model, key, base, temperature): (c, j, sw) for c, j, sw, p in jobs}
-        for i, f in enumerate(cf.as_completed(futs), 1):
-            c, j, sw = futs[f]; r = f.result()
-            if "error" not in r and sw:
-                r = {k: (flip(v) if k in ("understand", "faithful", "tone", "overall") else v) for k, v in r.items()}
-            votes.append({"id": c["id"], "judge": j, "swapped": sw, **r})
-            if i % 20 == 0 or i == len(jobs):
-                print(f"  判官 {i}/{len(jobs)}", flush=True)
+        pending = list(jobs); futs = {}
+        def submit_more():
+            while pending and len(futs) < a.workers * 2 and not budget.exceeded:
+                c, j, sw, p = pending.pop(0)
+                futs[ex.submit(call_judge, p, j, model, key, base, temperature)] = (c, j, sw)
+        submit_more(); done_n = 0
+        while futs:
+            for f in cf.as_completed(list(futs)):
+                c, j, sw = futs.pop(f); r = f.result(); done_n += 1
+                budget.add(r.get("usage"))
+                if "error" not in r and sw:
+                    r = {k: (flip(v) if k in ("understand", "faithful", "tone", "overall") else v) for k, v in r.items()}
+                votes.append({"id": c["id"], "judge": j, "swapped": sw, **r})
+                if done_n % 20 == 0 or done_n == len(jobs):
+                    print(f"  判官 {done_n}/{len(jobs)}  估算已花 ¥{budget.spent:.2f}", flush=True)
+                submit_more(); break
+        if pending:
+            print(f"!! 超预算（{budget.summary()}），{len(pending)} 票未跑，结果为**部分**", flush=True)
+            for c, j, sw, _ in pending:
+                votes.append({"id": c["id"], "judge": j, "swapped": sw, "error": "budget exceeded"})
 
     dims = ["understand", "faithful", "tone", "overall"]
     tally = {d: {"A": 0, "B": 0, "tie": 0} for d in dims}
@@ -143,22 +158,22 @@ def main() -> int:
         return round(sum(r >= 0.90 for r in rs) / max(1, len(rs)), 4), round(sum(rs) / max(1, len(rs)), 4)
     ra, rb = rate(oa), rate(ob)
 
-    ct = sum(v.get("usage", {}).get("completion_tokens", 0) for v in votes)
-    pt = sum(v.get("usage", {}).get("prompt_tokens", 0) for v in votes)
-    cost = (ct * PRICE_OUT + pt * PRICE_IN) / 1e6
+    ct, pt, cost = budget.completion, budget.prompt, budget.spent
     result = {"cost_est_cny": round(cost, 2), "tokens": {"prompt": pt, "completion": ct},
+              "budget_cny": a.budget_cny, "budget_exceeded": budget.exceeded, "partial": bool(budget.exceeded),
               "label_a": a.label_a, "label_b": a.label_b, "n_cases": len(per_case), "judges_per_case": a.judges,
               "judge_model": model, "vote_tally": tally, "case_majority_overall": case_win,
               "readability_strict": {"A": {"pass_rate": ra[0], "mean": ra[1]}, "B": {"pass_rate": rb[0], "mean": rb[1]}},
               "errors": sum("error" in v for v in votes), "votes": votes}
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\n{a.label_a} vs {a.label_b}  n={len(per_case)}  judges={a.judges}  errors={result['errors']}")
+    print(f"\n{a.label_a} vs {a.label_b}  n={len(per_case)}/{len(cases)}  judges={a.judges}  errors={result['errors']}"
+          + ("  ⚠️ 部分结果（超预算截停）" if budget.exceeded else ""))
     for d in dims:
         t = tally[d]; print(f"  {d:10s} A {t['A']:3d} | B {t['B']:3d} | tie {t['tie']:3d}")
     print(f"  题级总体多数票  A {case_win['A']} : B {case_win['B']} (tie {case_win['tie']})")
     print(f"  可读性 strict 达标率 A {ra[0]} / B {rb[0]}；均值 A {ra[1]} / B {rb[1]}")
-    print(f"  判官开销估算 ¥{cost:.2f}（prompt {pt} / completion {ct} tok；单价 out ¥{PRICE_OUT}/M）")
+    print("  " + budget.summary())
     return 0
 
 
