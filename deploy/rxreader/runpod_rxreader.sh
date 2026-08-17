@@ -16,7 +16,7 @@ CREATE=no; [ "${1:-}" = "--create" ] && CREATE=yes
 
 KEY="${RUNPOD_SSH_KEY:-$HOME/.ssh/runpod_automation}"
 GPU_TYPE="${RUNPOD_GPU:-NVIDIA A40}"
-IMAGE="${RUNPOD_IMAGE:-runpod/pytorch:2.8.0-py3.11-cuda12.8.1-devel-ubuntu22.04}"
+IMAGE="${RUNPOD_IMAGE:-runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04}"
 POD_NAME="${RUNPOD_POD_NAME:-eldertrans-rxreader}"
 REMOTE_DIR="/workspace/elder"
 TRAIN="deploy/rxreader/data/train_rxreader.jsonl"; VAL="deploy/rxreader/data/val_rxreader.jsonl"

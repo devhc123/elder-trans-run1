@@ -27,6 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from app.rxreader_label import PRICE_IN, PRICE_OUT  # noqa: E402
 from app.translate import load_env  # noqa: E402
 from metrics.readability import Lexicon, score  # noqa: E402
 
@@ -64,7 +65,7 @@ def call_judge(prompt: str, seed: int, model: str, key: str, base: str, temperat
             m = re.search(r"\{.*\}", content, re.S)
             if not m:
                 raise ValueError(f"no json: {content[:200]!r}")
-            return json.loads(m.group(0))
+            return {**json.loads(m.group(0)), "usage": r.get("usage", {})}
         except Exception as e:
             if attempt == 2:
                 return {"error": f"{type(e).__name__}: {e}"}
@@ -142,7 +143,11 @@ def main() -> int:
         return round(sum(r >= 0.90 for r in rs) / max(1, len(rs)), 4), round(sum(rs) / max(1, len(rs)), 4)
     ra, rb = rate(oa), rate(ob)
 
-    result = {"label_a": a.label_a, "label_b": a.label_b, "n_cases": len(per_case), "judges_per_case": a.judges,
+    ct = sum(v.get("usage", {}).get("completion_tokens", 0) for v in votes)
+    pt = sum(v.get("usage", {}).get("prompt_tokens", 0) for v in votes)
+    cost = (ct * PRICE_OUT + pt * PRICE_IN) / 1e6
+    result = {"cost_est_cny": round(cost, 2), "tokens": {"prompt": pt, "completion": ct},
+              "label_a": a.label_a, "label_b": a.label_b, "n_cases": len(per_case), "judges_per_case": a.judges,
               "judge_model": model, "vote_tally": tally, "case_majority_overall": case_win,
               "readability_strict": {"A": {"pass_rate": ra[0], "mean": ra[1]}, "B": {"pass_rate": rb[0], "mean": rb[1]}},
               "errors": sum("error" in v for v in votes), "votes": votes}
@@ -153,6 +158,7 @@ def main() -> int:
         t = tally[d]; print(f"  {d:10s} A {t['A']:3d} | B {t['B']:3d} | tie {t['tie']:3d}")
     print(f"  题级总体多数票  A {case_win['A']} : B {case_win['B']} (tie {case_win['tie']})")
     print(f"  可读性 strict 达标率 A {ra[0]} / B {rb[0]}；均值 A {ra[1]} / B {rb[1]}")
+    print(f"  判官开销估算 ¥{cost:.2f}（prompt {pt} / completion {ct} tok；单价 out ¥{PRICE_OUT}/M）")
     return 0
 
 
