@@ -102,3 +102,25 @@ S3 的读析 hint 不该拿可读性当主证据，主战场是「说得对且�
 验收仍是 S3 盲评（带 0.8B hint vs 裸），不是标注一致率。
 
 产物：`runs/s2-oracle/{hints,outputs}.jsonl`、`runs/ab/baseline_vs_oraclehint.json`。
+
+## S2：训练数据 + RunPod（2026-08-17 晚）
+
+- 训练池：`verifier/work/to_label.json` 的 1,955 条 verifier_train 原文（record_id 与测试集零重叠；
+  另按原文前 60 字查重剔掉 13 条跨库同文）→ 1,942 条。
+- 标签：`app/rxreader_label.py`（deepseek-v4-flash）→ `runs/s2-train/labels.jsonl`，1 条错误；
+  `app/build_rxreader_data.py` → **train 1,844 / val 97**，目标为 `-` 的 0.4%，user 段 p95 1,101 字。
+- 零样本 qwen3.5:0.8b 当 rxreader：core40 两栏全空（写满篇解读）→ 微调必要性成立。
+- RunPod：`deploy/rxreader/runpod_rxreader.sh --create`（用户 17:5x 授权），A40，Qwen3.5-0.8B LoRA
+  r32/α64、3 epoch，配置抄 eqreader v4。日志 `runs/rxreader/runpod.log`。
+
+### 💸 事故：deepseek 一个 batch 烧了 ~¥48
+
+- 标注器沿用 harness 的默认（thinking 开、`max_tokens` 12000），12 并发起跑没先算账。
+- 实测每条 completion ~3.9k token，**reasoning 占 95%**；deepseek 当天 16:00 UTC 起改峰谷计价，
+  峰时（06–10 UTC，正是跑的时段）输出 $1.32/M → 1,311 条 ≈ ¥48，账户余额剩 ¥43。
+- 修复：`thinking: {type: disabled}` 后同一条 **63 tok / 3s vs 3,844 tok / 40s，输出等价**；
+  剩余 632 条 ¥0.99 跑完。标注器现默认关 thinking、逐条记 usage、`--budget-cny` 默认 5 超了自停。
+- 已写入 `~/.claude/skills/finetune-gguf/SKILL.md` 北极星「推论二：每 batch ≤ ¥5（硬门）」，
+  含三条规矩（抽取任务先关 thinking / 先跑 20 条读 usage / 记账+自停+挪谷时）。
+- 未修的：`app/translate.py`（生成，thinking 可能有用，保留）与 `app/ab_judge.py`（判官）还没接预算门，
+  下一次批量前接上。
