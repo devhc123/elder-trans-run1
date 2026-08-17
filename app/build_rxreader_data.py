@@ -42,7 +42,7 @@ def parse_target(s: str) -> tuple[list[str], list[str]]:
             if line.startswith(tag):
                 body = line[len(tag):].strip()
                 if body and body != "-":
-                    dst.extend(p.strip() for p in body.replace("，", "、").split("、") if p.strip())
+                    dst.extend(p.strip() for p in body.split("、") if p.strip())   # 分隔符只认「、」，短语本身可含「，」
                 break
     return keep, explain
 
@@ -64,8 +64,8 @@ def main() -> int:
         if not c: dropped["missing"] += 1; continue
         if len(c["source_text"]) > a.max_chars: dropped["toolong"] += 1; continue
         # 再做一次逐字子串守门（标注器已做，但训练目标绝不能含原文没有的词）
-        keep = [k for k in lb["keep"] if k in c["source_text"]]
-        explain = [k for k in lb["explain"] if k in c["source_text"] and k not in keep]
+        keep = [k for k in lb["keep"] if k in c["source_text"] and "、" not in k and "\n" not in k]
+        explain = [k for k in lb["explain"] if k in c["source_text"] and k not in keep and "、" not in k and "\n" not in k]
         rows.append({"id": lb["id"], "scenario": c.get("scenario"),
                      "messages": [{"role": "user", "content": USER_TMPL.format(persona="-", text=c["source_text"])},
                                   {"role": "assistant", "content": format_target(keep, explain)}]})

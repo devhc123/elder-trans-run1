@@ -53,11 +53,25 @@ def snap(phrase: str, text: str, thr: float = 0.75) -> str | None:
     return best
 
 
-def label_one(c: dict, model: str, key: str, base: str) -> dict:
-    body = json.dumps({"model": model, "temperature": 0.0, "max_tokens": 12000,   # 推理模型：thinking 计入额度，4000 时 13/40 被吃光、content 空
-                       "messages": [{"role": "system", "content": SYSTEM},
-                                    {"role": "user", "content": "【原文】\n" + c["source_text"]}]},
-                      ensure_ascii=False).encode()
+# 峰时 deepseek-v4-flash 输出 $1.32/M ≈ ¥9.5/M；谷时一半。可用环境变量 DEEPSEEK_OUT_CNY_PER_M 覆盖。
+PRICE_OUT = float(os.environ.get("DEEPSEEK_OUT_CNY_PER_M", "9.5"))
+PRICE_IN = float(os.environ.get("DEEPSEEK_IN_CNY_PER_M", "1.0"))
+
+
+def est_cny(usage: dict) -> float:
+    return (usage.get("completion_tokens", 0) * PRICE_OUT + usage.get("prompt_tokens", 0) * PRICE_IN) / 1e6
+
+
+def label_one(c: dict, model: str, key: str, base: str, think: bool = False) -> dict:
+    # **默认关 thinking**：抽逐字子串不需要推理。实测同一条 thinking 开 3,844 tok/40s，关 63 tok/3s，
+    # 输出等价——开着跑 1,311 条烧了 ~¥48（finetune-gguf 北极星推论二：每 batch ≤ ¥5）。
+    req_body = {"model": model, "temperature": 0.0,
+                "max_tokens": 12000 if think else 1000,
+                "messages": [{"role": "system", "content": SYSTEM},
+                             {"role": "user", "content": "【原文】\n" + c["source_text"]}]}
+    if not think:
+        req_body["thinking"] = {"type": "disabled"}
+    body = json.dumps(req_body, ensure_ascii=False).encode()
     req = urllib.request.Request(f"{base.rstrip('/')}/chat/completions", data=body,
                                  headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
     for attempt in range(3):
@@ -70,7 +84,8 @@ def label_one(c: dict, model: str, key: str, base: str) -> dict:
                 raise RuntimeError(f"空输出 finish={fr} reasoning_tokens={rt}")
             m = re.search(r"\{.*\}", content, re.S)
             obj = json.loads(m.group(0)) if m else {}
-            out = {"id": c["id"], "keep": [], "explain": [], "raw": content, "dropped": []}
+            out = {"id": c["id"], "keep": [], "explain": [], "raw": content, "dropped": [],
+                   "usage": r.get("usage", {}), "think": think}
             for col in ("keep", "explain"):
                 seen = set()
                 for p in obj.get(col, []) or []:
@@ -93,6 +108,8 @@ def main() -> int:
     ap.add_argument("--in", dest="inp", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--think", action="store_true", help="开 thinking（贵 ~60×，默认关）")
+    ap.add_argument("--budget-cny", type=float, default=5.0, help="本 batch 估算开销上限，超了立即停（默认 ¥5）")
     a = ap.parse_args()
     load_env()
     model = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash")
@@ -109,11 +126,18 @@ def main() -> int:
     # 逐条追加落盘（append 模式）：两小时的批量不能只在结束时写一次
     a.out.parent.mkdir(parents=True, exist_ok=True)
     with a.out.open("a", encoding="utf-8") as fh, cf.ThreadPoolExecutor(a.workers) as ex:
-        futs = {ex.submit(label_one, c, model, key, base): c for c in todo}
+        futs = {ex.submit(label_one, c, model, key, base, a.think): c for c in todo}
+        spent = 0.0
         for i, f in enumerate(cf.as_completed(futs), 1):
             r = f.result(); done[r["id"]] = r
             fh.write(json.dumps(r, ensure_ascii=False) + "\n"); fh.flush()
-            if i % 20 == 0 or i == len(todo): print(f"  {i}/{len(todo)}", flush=True)
+            spent += est_cny(r.get("usage", {}))
+            if i % 20 == 0 or i == len(todo): print(f"  {i}/{len(todo)}  估算已花 ¥{spent:.2f}", flush=True)
+            if spent > a.budget_cny:
+                print(f"!! 估算开销 ¥{spent:.2f} 超过预算 ¥{a.budget_cny}，停止提交，等在途完成", flush=True)
+                for g in futs:
+                    g.cancel()
+                break
     # 收尾按 cases 顺序重写一份干净的（去掉续跑产生的重复/错误行）
     with a.out.open("w", encoding="utf-8") as fh:
         for c in cases:
@@ -122,7 +146,9 @@ def main() -> int:
     err = sum(bool(r.get("error")) for r in rs)
     nk = sum(len(r["keep"]) for r in rs); ne = sum(len(r["explain"]) for r in rs); nd = sum(len(r.get("dropped", [])) for r in rs)
     empty = sum(1 for r in rs if not r["keep"] and not r["explain"])
+    ct = sum(r.get("usage", {}).get("completion_tokens", 0) for r in rs); pt = sum(r.get("usage", {}).get("prompt_tokens", 0) for r in rs)
     print(f"写入 {a.out}: {len(rs)} 条, 错误 {err}, keep 共 {nk}, explain 共 {ne}, 丢弃 {nd}, 两栏皆空 {empty}")
+    print(f"token: prompt {pt} completion {ct}；估算 ¥{(ct*PRICE_OUT+pt*PRICE_IN)/1e6:.2f}（单价 out ¥{PRICE_OUT}/M in ¥{PRICE_IN}/M）")
     return 0
 
 

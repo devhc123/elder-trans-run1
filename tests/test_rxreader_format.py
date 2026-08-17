@@ -18,7 +18,7 @@ def test_roundtrip_empty_and_half():
     assert format_target([], []) == "-" and parse_target("-") == ([], [])
     t = format_target([], ["INR"])
     assert parse_target(t) == ([], ["INR"])
-    assert parse_target("保留：a，b\n解释：-") == (["a", "b"], [])   # 全角标点也认
+    assert parse_target("保留：a、1，25羟基维生素D3\n解释：-") == (["a", "1，25羟基维生素D3"], [])   # 全角冒号认；「，」是短语的一部分
 
 
 def test_snap_substring_and_fuzzy():
