@@ -72,3 +72,33 @@ S3 的读析 hint 不该拿可读性当主证据，主战场是「说得对且�
 
 下一步 S2：写 rxreader 的 silver 标注脚本（deepseek 抽「必须原样保留 / 需要解释」两栏、子串校验），
 底座 Qwen3.5-0.8B，复用 `verifier/train_lora.py` 的 unsloth+RunPod 链。
+
+## S2-0：oracle hint 天花板 POC（$0 级，2026-08-17）——**成立**
+
+训 0.8B 之前先问：hint 这条路本身有没有天花板？让 deepseek 自己当 rxreader
+（`app/rxreader_label.py`，抽 keep/explain 两栏、逐字子串校验+0.75 吸附），
+把 hint 注回 `app/translate.py`，与 S1 基线盲评（同判官、同 3×40）：
+
+| 维度 | 基线 | oracle-hint | 平 |
+|---|---:|---:|---:|
+| 听得懂 | 53 | 54 | 12 |
+| 说得对且全 | 24 | **83** | 12 |
+| 分寸 | 20 | 49 | 50 |
+| 总体票 | 30 | 84 | 5 |
+| **题级多数票** | **11** | **29** | 0 |
+
+对照噪声底 17:22 → **29:11 且忠实维度净胜 +59，两条判据都过**。增益几乎全部来自
+「说得对且全」，与预期一致（可读性在基线上已饱和）。
+
+副作用：hint 臂平均长 +12%（709→796 字）；耗时持平（15.6s vs 16.0s）；可读性 strict
+达标率 1.0→0.95，掉的两题（医嘱转译-011、用药干预-002）是药名/术语被反复念
+（「奥美拉唑」出现 5 次）——explain 栏的措辞可以加一句「解释一次后用白话代称」，S3 时调。
+
+标注器踩坑：deepseek-v4-flash `max_tokens=4000` 时 13/40 条 thinking 吃光、content 空
+（reasoning_tokens 3789–4000）；已改 12000 并把空输出记为 error 触发重标。**第三次栽同一个坑**，
+已在 `app/rxreader_label.py` 注释里钉住。
+
+**结论**：hint 岗位值得训。目标：0.8B 复现 deepseek 标注的 keep/explain（silver 即可），
+验收仍是 S3 盲评（带 0.8B hint vs 裸），不是标注一致率。
+
+产物：`runs/s2-oracle/{hints,outputs}.jsonl`、`runs/ab/baseline_vs_oraclehint.json`。
